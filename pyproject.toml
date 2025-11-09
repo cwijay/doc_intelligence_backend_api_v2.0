@@ -1,0 +1,78 @@
+[project]
+name = "document-intelligence-backend"
+version = "1.0.0"
+description = "AI-powered document intelligence backend with FastAPI, Firebase, and LLM integration"
+# readme = "README.md"  # Excluded from Docker builds via .dockerignore
+license = {text = "MIT"}
+requires-python = ">=3.12"
+authors = [
+    {name = "Document Intelligence Team"}
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+]
+dependencies = [
+    # Core FastAPI dependencies
+    "fastapi==0.115.7",
+    "uvicorn[standard]==0.34.0",
+    "python-multipart==0.0.17",
+    # Database (Firestore) and Cloud
+    "firebase-admin>=6.5.0",
+    "google-auth==2.35.0",
+    "google-cloud-storage==2.19.0",
+    # Validation and configuration - STRICT Pydantic v2 constraints
+    "pydantic>=2.11.0,<3.0.0",
+    "pydantic-settings==2.7.1",
+    "python-dotenv==1.0.1",
+    # Authentication and security
+    "pyjwt==2.8.0",
+    "passlib[bcrypt]==1.7.4",
+    "bcrypt==4.0.1",
+    # Utilities and logging
+    "python-json-logger>=2.0.7",
+    "structlog>=24.1.0",
+    "dnspython==2.7.0",
+    "pyyaml>=6.0.1",
+    # AI/LLM Dependencies - FIXED LlamaIndex with Pydantic v2 compatibility
+    "openai==1.86.0",
+    "tiktoken==0.8.0",
+    "pinecone[grpc]==5.4.0",
+    "langchain==0.3.18",
+    "langchain-openai==0.3.29",
+    "rank-bm25==0.2.2",
+    "langchain-community==0.3.17",
+    "langgraph>=0.3.23",
+    "langgraph-sdk==0.2.9",  # Pinned to avoid reinstallation loop
+    # LlamaIndex with explicit Pydantic v2 support - FIXED ONCE AND FOR ALL
+    "llama-parse==0.5.20",
+    "llama-index-core==0.13.3", # This version properly supports Pydantic v2
+    # Data processing
+    "pandas==2.2.3",
+    "openpyxl==3.1.5",
+    "xlrd==2.0.1",
+    # Async support
+    "nest-asyncio>=1.6.0",
+    "email-validator>=2.3.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.23.0",
+    "pytest-cov>=4.0.0",
+    "black>=23.0.0",
+    "ruff>=0.1.0",
+    "mypy>=1.8.0",
+    "pre-commit>=3.0.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
+

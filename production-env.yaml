@@ -1,0 +1,11 @@
+ENVIRONMENT: production
+FIREBASE_PROJECT_ID: biz2bricksv1
+FIREBASE_DATABASE_ID: biz2bricks-docdb-v1
+GCP_PROJECT_ID: biz2bricksv1
+LOG_LEVEL: INFO
+LOG_FORMAT: json
+GCS_BUCKET_NAME: biz2bricksv1-document-store
+JWT_SECRET_KEY: your-256-bit-production-secret-key-change-this
+PRODUCTION_CORS_ORIGINS: '["http://localhost:3000","https://document-intelligence-frontend-727735128283.us-central1.run.app"]'
+FRONTEND_DOMAIN: biztobricks.com
+ENABLE_CORS_DEBUG: "true"
