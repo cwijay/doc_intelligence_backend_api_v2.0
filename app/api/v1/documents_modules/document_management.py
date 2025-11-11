@@ -8,13 +8,18 @@ This module handles core document management operations, focusing on:
 - Deleting documents (soft delete)
 """
 
-from typing import Dict, Any, Optional
-from fastapi import APIRouter, Query, Depends, HTTPException, status
+from typing import Dict, Optional
+from fastapi import APIRouter, Query, Depends
 
 from app.models.schemas import (
-    DocumentList, DocumentResponse, DocumentDeleteResponse, 
-    DocumentStatusUpdate, PaginationParams, DocumentFilters,
-    FileType, DocumentStatus
+    DocumentList,
+    DocumentResponse,
+    DocumentDeleteResponse,
+    DocumentStatusUpdate,
+    PaginationParams,
+    DocumentFilters,
+    FileType,
+    DocumentStatus,
 )
 from app.services.document_service import DocumentNotFoundError, DocumentValidationError
 from .common import (
@@ -25,14 +30,14 @@ from .common import (
     handle_generic_error,
     log_operation_start,
     log_operation_success,
-    logger
+    logger,
 )
 
 router = APIRouter()
 
 
 @router.get(
-    "/", 
+    "/",
     response_model=DocumentList,
     summary="📋 List Documents",
     description="""List documents with pagination and filtering capabilities.
@@ -113,14 +118,14 @@ GET /api/v1/documents/?page=1&per_page=10&file_type=pdf&status=uploaded
                                         "uploaded_by": "jhYXgm0s4avwacnBSXH9",
                                         "is_active": True,
                                         "created_at": "2025-08-15T10:12:36.993659",
-                                        "updated_at": "2025-08-15T10:12:36.993662"
+                                        "updated_at": "2025-08-15T10:12:36.993662",
                                     }
                                 ],
                                 "total": 15,
                                 "page": 1,
                                 "per_page": 10,
-                                "total_pages": 2
-                            }
+                                "total_pages": 2,
+                            },
                         },
                         "all_documents": {
                             "summary": "All documents (no folder filter)",
@@ -140,26 +145,24 @@ GET /api/v1/documents/?page=1&per_page=10&file_type=pdf&status=uploaded
                                         "uploaded_by": "jhYXgm0s4avwacnBSXH9",
                                         "is_active": True,
                                         "created_at": "2025-08-15T10:12:36.993659",
-                                        "updated_at": "2025-08-15T10:12:36.993662"
+                                        "updated_at": "2025-08-15T10:12:36.993662",
                                     }
                                 ],
                                 "total": 45,
                                 "page": 1,
                                 "per_page": 10,
-                                "total_pages": 5
-                            }
-                        }
+                                "total_pages": 5,
+                            },
+                        },
                     }
                 }
-            }
+            },
         },
         400: {
             "description": "Invalid query parameters",
             "content": {
-                "application/json": {
-                    "example": {"detail": "Invalid query parameters"}
-                }
-            }
+                "application/json": {"example": {"detail": "Invalid query parameters"}}
+            },
         },
         401: {
             "description": "Authentication required",
@@ -167,31 +170,41 @@ GET /api/v1/documents/?page=1&per_page=10&file_type=pdf&status=uploaded
                 "application/json": {
                     "example": {"detail": "Invalid or expired session token"}
                 }
-            }
-        }
-    }
+            },
+        },
+    },
 )
 async def list_documents(
     page: int = Query(1, ge=1, description="Page number"),
     per_page: int = Query(20, ge=1, le=100, description="Items per page"),
-    filename: Optional[str] = Query(None, description="Filter by filename (partial match)"),
-    file_type: Optional[FileType] = Query(None, description="Filter by file type (pdf or xlsx)"),
-    document_status: Optional[DocumentStatus] = Query(None, description="Filter by processing status"),
-    folder_id: Optional[str] = Query(None, description="Filter by folder ID (legacy uploads)"),
-    folder_path: Optional[str] = Query(None, description="Filter by folder path (target_path uploads, e.g. 'invoices')"),
+    filename: Optional[str] = Query(
+        None, description="Filter by filename (partial match)"
+    ),
+    file_type: Optional[FileType] = Query(
+        None, description="Filter by file type (pdf or xlsx)"
+    ),
+    document_status: Optional[DocumentStatus] = Query(
+        None, description="Filter by processing status"
+    ),
+    folder_id: Optional[str] = Query(
+        None, description="Filter by folder ID (legacy uploads)"
+    ),
+    folder_path: Optional[str] = Query(
+        None, description="Filter by folder path (target_path uploads, e.g. 'invoices')"
+    ),
     uploaded_by: Optional[str] = Query(None, description="Filter by uploader user ID"),
     user_context: Dict[str, str] = Depends(get_user_context),
-    deps = Depends(get_document_dependencies)
+    deps=Depends(get_document_dependencies),
 ):
     """
     List documents with pagination and filtering.
-    
+
     Provides comprehensive document listing with folder-based filtering,
     pagination, and multiple search criteria for efficient document discovery.
     """
     document_service = deps["document_service"]
     org_id = user_context["org_id"]
-    
+
     try:
         pagination = PaginationParams(page=page, per_page=per_page)
         filters = DocumentFilters(
@@ -200,34 +213,36 @@ async def list_documents(
             status=document_status,
             folder_id=folder_id,
             folder_path=folder_path,
-            uploaded_by=uploaded_by
+            uploaded_by=uploaded_by,
         )
-        
-        logger.debug("Listing documents", 
-                    org_id=org_id,
-                    page=page,
-                    per_page=per_page,
-                    filters=filters.model_dump(exclude_none=True))
-        
-        result = await document_service.list_documents(
+
+        logger.debug(
+            "Listing documents",
             org_id=org_id,
-            pagination=pagination,
-            filters=filters
+            page=page,
+            per_page=per_page,
+            filters=filters.model_dump(exclude_none=True),
         )
-        
-        logger.debug("Documents listed successfully", 
-                    org_id=org_id,
-                    count=len(result.documents),
-                    total=result.total)
-        
+
+        result = await document_service.list_documents(
+            org_id=org_id, pagination=pagination, filters=filters
+        )
+
+        logger.debug(
+            "Documents listed successfully",
+            org_id=org_id,
+            count=len(result.documents),
+            total=result.total,
+        )
+
         return result
-        
+
     except Exception as e:
         raise handle_generic_error(e, "listing documents", **user_context)
 
 
 @router.get(
-    "/{document_id}", 
+    "/{document_id}",
     response_model=DocumentResponse,
     summary="📄 Get Document Details",
     description="""Retrieve detailed information about a specific document.
@@ -286,52 +301,49 @@ async def list_documents(
                         "status": "uploaded",
                         "org_id": "oJIChgDgktkF30dAPy2c",
                         "uploaded_by": "jhYXgm0s4avwacnBSXH9",
-                        "created_at": "2025-08-15T10:12:36.993659"
+                        "created_at": "2025-08-15T10:12:36.993659",
                     }
                 }
-            }
+            },
         },
         404: {
             "description": "Document not found",
             "content": {
-                "application/json": {
-                    "example": {"detail": "Document not found"}
-                }
-            }
-        }
-    }
+                "application/json": {"example": {"detail": "Document not found"}}
+            },
+        },
+    },
 )
 async def get_document(
     document_id: str,
     user_context: Dict[str, str] = Depends(get_user_context),
-    deps = Depends(get_document_dependencies)
+    deps=Depends(get_document_dependencies),
 ):
     """
     Retrieve detailed information about a specific document.
-    
+
     Returns comprehensive document information including metadata,
     processing status, and AI-generated content if available.
     """
     document_service = deps["document_service"]
     org_id = user_context["org_id"]
-    
+
     try:
-        logger.debug("Getting document", 
-                    org_id=org_id,
-                    document_id=document_id)
-        
+        logger.debug("Getting document", org_id=org_id, document_id=document_id)
+
         result = await document_service.get_document(
-            org_id=org_id,
-            document_id=document_id
+            org_id=org_id, document_id=document_id
         )
-        
-        logger.debug("Document retrieved successfully", 
-                    org_id=org_id,
-                    document_id=document_id,
-                    filename=result.filename)
-        
+
+        logger.debug(
+            "Document retrieved successfully",
+            org_id=org_id,
+            document_id=document_id,
+            filename=result.filename,
+        )
+
         return result
-        
+
     except DocumentNotFoundError as e:
         raise handle_document_not_found_error(e, "retrieving document", **user_context)
     except Exception as e:
@@ -339,7 +351,7 @@ async def get_document(
 
 
 @router.put(
-    "/{document_id}/status", 
+    "/{document_id}/status",
     response_model=DocumentResponse,
     summary="🔄 Update Document Status",
     description="""Update the processing status of a document.
@@ -394,69 +406,65 @@ curl -X PUT "http://localhost:8000/api/v1/documents/123/status" \\
                     "example": {
                         "id": "78258b82-db53-41a3-848a-ce45a32f99c7",
                         "status": "parsed",
-                        "updated_at": "2025-08-15T10:35:00.123456"
+                        "updated_at": "2025-08-15T10:35:00.123456",
                     }
                 }
-            }
+            },
         },
         400: {
             "description": "Invalid status or validation error",
             "content": {
-                "application/json": {
-                    "example": {"detail": "Invalid status transition"}
-                }
-            }
+                "application/json": {"example": {"detail": "Invalid status transition"}}
+            },
         },
         404: {
             "description": "Document not found",
             "content": {
-                "application/json": {
-                    "example": {"detail": "Document not found"}
-                }
-            }
-        }
-    }
+                "application/json": {"example": {"detail": "Document not found"}}
+            },
+        },
+    },
 )
 async def update_document_status(
     document_id: str,
     status_update: DocumentStatusUpdate,
     user_context: Dict[str, str] = Depends(get_user_context),
-    deps = Depends(get_document_dependencies)
+    deps=Depends(get_document_dependencies),
 ):
     """
     Update document processing status.
-    
+
     Allows updating the processing status and associated metadata
     for tracking document processing workflows.
     """
     document_service = deps["document_service"]
     org_id = user_context["org_id"]
     user_id = user_context["user_id"]
-    
+
     try:
         log_operation_start(
             "Document status update",
             document_id=document_id,
             new_status=status_update.status.value,
-            **user_context
+            **user_context,
         )
-        
+
         result = await document_service.update_document_status(
             org_id=org_id,
             document_id=document_id,
             new_status=status_update.status,
-            metadata=status_update.metadata
+            metadata=status_update.metadata,
         )
-        
+
         log_operation_success(
             "Document status update",
             document_id=document_id,
             new_status=status_update.status.value,
-            **user_context
+            **user_context,
         )
-        
+
         return result
-        
+
     except DocumentNotFoundError as e:
         raise handle_document_not_found_error(e, "status update", **user_context)
     except DocumentValidationError as e:
@@ -466,7 +474,7 @@ async def update_document_status(
 
 
 @router.delete(
-    "/{document_id}", 
+    "/{document_id}",
     response_model=DocumentDeleteResponse,
     summary="🗑️ Delete Document",
     description="""Delete a document from the system.
@@ -507,58 +515,60 @@ curl -X DELETE "http://localhost:8000/api/v1/documents/123" \\
                 "application/json": {
                     "example": {
                         "success": True,
-                        "message": "Document deleted successfully"
+                        "message": "Document deleted successfully",
                     }
                 }
-            }
+            },
         },
         404: {
             "description": "Document not found",
             "content": {
-                "application/json": {
-                    "example": {"detail": "Document not found"}
-                }
-            }
+                "application/json": {"example": {"detail": "Document not found"}}
+            },
         },
         500: {
             "description": "Deletion error",
             "content": {
                 "application/json": {
-                    "example": {"detail": "An error occurred while deleting the document"}
+                    "example": {
+                        "detail": "An error occurred while deleting the document"
+                    }
                 }
-            }
-        }
-    }
+            },
+        },
+    },
 )
 async def delete_document(
     document_id: str,
     user_context: Dict[str, str] = Depends(get_user_context),
-    deps = Depends(get_document_dependencies)
+    deps=Depends(get_document_dependencies),
 ):
     """
     Delete a document from the system.
-    
+
     Performs soft delete in Firestore and hard delete from GCS storage.
     This operation cannot be undone.
     """
     document_service = deps["document_service"]
     org_id = user_context["org_id"]
-    
+
     try:
-        log_operation_start("Document deletion", document_id=document_id, **user_context)
-        
+        log_operation_start(
+            "Document deletion", document_id=document_id, **user_context
+        )
+
         result = await document_service.delete_document(
-            org_id=org_id,
-            document_id=document_id
+            org_id=org_id, document_id=document_id
         )
-        
-        log_operation_success("Document deletion", document_id=document_id, **user_context)
-        
+
+        log_operation_success(
+            "Document deletion", document_id=document_id, **user_context
+        )
+
         return DocumentDeleteResponse(
-            success=result["success"],
-            message=result["message"]
+            success=result["success"], message=result["message"]
         )
-        
+
     except DocumentNotFoundError as e:
         raise handle_document_not_found_error(e, "deletion", **user_context)
     except Exception as e:

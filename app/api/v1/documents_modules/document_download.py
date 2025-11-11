@@ -8,8 +8,8 @@ This module handles document download operations, focusing on:
 - Proper error handling for missing documents
 """
 
-from typing import Dict, Any
-from fastapi import APIRouter, Query, Depends, HTTPException, status
+from typing import Dict
+from fastapi import APIRouter, Query, Depends
 from fastapi.responses import RedirectResponse
 
 from app.models.schemas import DocumentDownloadResponse
@@ -22,14 +22,13 @@ from .common import (
     handle_generic_error,
     log_operation_start,
     log_operation_success,
-    logger
 )
 
 router = APIRouter()
 
 
 @router.get(
-    "/{document_id}/download", 
+    "/{document_id}/download",
     response_model=DocumentDownloadResponse,
     summary="🔗 Get Download URL",
     description="""Generate a signed download URL for secure document access.
@@ -84,79 +83,87 @@ curl -X GET "http://localhost:8000/api/v1/documents/123/download?expiration_minu
                         "download_url": "https://storage.googleapis.com/bucket/path?signed-url-params",
                         "expires_at": "2025-08-15T11:12:36.993659",
                         "file_size": 1024567,
-                        "content_type": "application/pdf"
+                        "content_type": "application/pdf",
                     }
                 }
-            }
+            },
         },
         400: {
             "description": "Invalid expiration time",
             "content": {
                 "application/json": {
-                    "example": {"detail": "Expiration time must be between 1 and 1440 minutes"}
+                    "example": {
+                        "detail": "Expiration time must be between 1 and 1440 minutes"
+                    }
                 }
-            }
+            },
         },
         404: {
             "description": "Document not found",
             "content": {
-                "application/json": {
-                    "example": {"detail": "Document not found"}
-                }
-            }
+                "application/json": {"example": {"detail": "Document not found"}}
+            },
         },
         500: {
             "description": "URL generation error",
             "content": {
                 "application/json": {
-                    "example": {"detail": "An error occurred while generating download URL"}
+                    "example": {
+                        "detail": "An error occurred while generating download URL"
+                    }
                 }
-            }
-        }
-    }
+            },
+        },
+    },
 )
 async def get_download_url(
     document_id: str,
-    expiration_minutes: int = Query(60, ge=1, le=1440, description="URL expiration in minutes"),
+    expiration_minutes: int = Query(
+        60, ge=1, le=1440, description="URL expiration in minutes"
+    ),
     user_context: Dict[str, str] = Depends(get_user_context),
-    deps = Depends(get_document_dependencies)
+    deps=Depends(get_document_dependencies),
 ):
     """
     Generate a signed download URL for secure document access.
-    
+
     Creates a time-limited, signed URL that allows secure downloading
     of documents without exposing permanent storage paths.
     """
     document_service = deps["document_service"]
     org_id = user_context["org_id"]
-    
+
     try:
         log_operation_start(
             "Download URL generation",
             document_id=document_id,
             expiration_minutes=expiration_minutes,
-            **user_context
+            **user_context,
         )
-        
+
         result = await document_service.download_document(
             org_id=org_id,
             document_id=document_id,
-            expiration_minutes=expiration_minutes
+            expiration_minutes=expiration_minutes,
         )
-        
+
         log_operation_success(
             "Download URL generation",
             document_id=document_id,
             filename=result.filename,
-            **user_context
+            **user_context,
         )
-        
+
         return result
-        
+
     except DocumentNotFoundError as e:
-        raise handle_document_not_found_error(e, "download URL generation", **user_context)
+        raise handle_document_not_found_error(
+            e, "download URL generation", **user_context
+        )
     except DocumentValidationError as e:
-        raise handle_document_validation_error(e, "download URL generation", **user_context)
+        raise handle_document_validation_error(
+            e, "download URL generation", **user_context
+        )
     except Exception as e:
         raise handle_generic_error(e, "download URL generation", **user_context)
 
@@ -210,66 +217,68 @@ curl -L "http://localhost:8000/api/v1/documents/123/download/redirect" \\
             "headers": {
                 "Location": {
                     "description": "The signed download URL",
-                    "schema": {"type": "string"}
+                    "schema": {"type": "string"},
                 }
-            }
+            },
         },
         404: {
             "description": "Document not found",
             "content": {
-                "application/json": {
-                    "example": {"detail": "Document not found"}
-                }
-            }
+                "application/json": {"example": {"detail": "Document not found"}}
+            },
         },
         500: {
             "description": "Redirect generation error",
             "content": {
                 "application/json": {
-                    "example": {"detail": "An error occurred while generating download redirect"}
+                    "example": {
+                        "detail": "An error occurred while generating download redirect"
+                    }
                 }
-            }
-        }
-    }
+            },
+        },
+    },
 )
 async def download_document_redirect(
     document_id: str,
-    expiration_minutes: int = Query(60, ge=1, le=1440, description="URL expiration in minutes"),
+    expiration_minutes: int = Query(
+        60, ge=1, le=1440, description="URL expiration in minutes"
+    ),
     user_context: Dict[str, str] = Depends(get_user_context),
-    deps = Depends(get_document_dependencies)
+    deps=Depends(get_document_dependencies),
 ):
     """
     Direct download redirect for document.
-    
+
     Generates a signed download URL and returns an HTTP redirect response,
     allowing browsers to automatically initiate the download.
     """
     document_service = deps["document_service"]
     org_id = user_context["org_id"]
-    
+
     try:
         log_operation_start(
             "Direct download redirect",
             document_id=document_id,
             expiration_minutes=expiration_minutes,
-            **user_context
+            **user_context,
         )
-        
+
         result = await document_service.download_document(
             org_id=org_id,
             document_id=document_id,
-            expiration_minutes=expiration_minutes
+            expiration_minutes=expiration_minutes,
         )
-        
+
         log_operation_success(
             "Direct download redirect",
             document_id=document_id,
             filename=result.filename,
-            **user_context
+            **user_context,
         )
-        
+
         return RedirectResponse(url=result.download_url, status_code=302)
-        
+
     except DocumentNotFoundError as e:
         raise handle_document_not_found_error(e, "download redirect", **user_context)
     except Exception as e:

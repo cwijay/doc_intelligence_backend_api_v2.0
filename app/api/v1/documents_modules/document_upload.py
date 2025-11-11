@@ -13,10 +13,7 @@ import json
 from fastapi import APIRouter, File, Form, UploadFile, Depends, HTTPException, status
 
 from app.models.schemas import DocumentUploadResponse
-from app.services.document_service import (
-    DocumentValidationError,
-    DocumentUploadError
-)
+from app.services.document_service import DocumentValidationError, DocumentUploadError
 from .common import (
     get_document_dependencies,
     get_user_context,
@@ -25,8 +22,7 @@ from .common import (
     handle_generic_error,
     log_operation_start,
     log_operation_success,
-    log_operation_error,
-    logger
+    logger,
 )
 
 router = APIRouter()
@@ -107,12 +103,12 @@ curl -X POST "http://localhost:8000/api/v1/documents/upload" \\
                             "storage_path": "Google/original/invoices/document.pdf",
                             "org_id": "oJIChgDgktkF30dAPy2c",
                             "uploaded_by": "jhYXgm0s4avwacnBSXH9",
-                            "created_at": "2025-08-15T10:12:36.993659"
+                            "created_at": "2025-08-15T10:12:36.993659",
                         },
-                        "upload_time_ms": 234
+                        "upload_time_ms": 234,
                     }
                 }
-            }
+            },
         },
         400: {
             "description": "Validation error",
@@ -121,15 +117,17 @@ curl -X POST "http://localhost:8000/api/v1/documents/upload" \\
                     "examples": {
                         "invalid_metadata": {
                             "summary": "Invalid metadata JSON",
-                            "value": {"detail": "Invalid metadata JSON format"}
+                            "value": {"detail": "Invalid metadata JSON format"},
                         },
                         "file_validation": {
                             "summary": "File validation error",
-                            "value": {"detail": "File size exceeds maximum limit of 50MB"}
-                        }
+                            "value": {
+                                "detail": "File size exceeds maximum limit of 50MB"
+                            },
+                        },
                     }
                 }
-            }
+            },
         },
         413: {
             "description": "File too large",
@@ -137,42 +135,53 @@ curl -X POST "http://localhost:8000/api/v1/documents/upload" \\
                 "application/json": {
                     "example": {"detail": "File size exceeds maximum limit of 50MB"}
                 }
-            }
+            },
         },
         422: {
             "description": "Unsupported file type",
             "content": {
                 "application/json": {
-                    "example": {"detail": "Unsupported file type. Only PDF and XLSX files are allowed"}
+                    "example": {
+                        "detail": "Unsupported file type. Only PDF and XLSX files are allowed"
+                    }
                 }
-            }
+            },
         },
         500: {
             "description": "Upload processing error",
             "content": {
                 "application/json": {
-                    "example": {"detail": "An error occurred while processing the document"}
+                    "example": {
+                        "detail": "An error occurred while processing the document"
+                    }
                 }
-            }
-        }
-    }
+            },
+        },
+    },
 )
 async def upload_document(
     file: UploadFile = File(..., description="Document file (PDF or XLSX, max 50MB)"),
-    target_path: Optional[str] = Form(None, description="Complete storage path: {org_name}/original/{folder_name}/{document_name}"),
-    folder_id: Optional[str] = Form(None, description="Target folder ID (legacy, ignored if target_path provided)"),
-    metadata: Optional[str] = Form("{}", description="Additional metadata as JSON string"),
+    target_path: Optional[str] = Form(
+        None,
+        description="Complete storage path: {org_name}/original/{folder_name}/{document_name}",
+    ),
+    folder_id: Optional[str] = Form(
+        None, description="Target folder ID (legacy, ignored if target_path provided)"
+    ),
+    metadata: Optional[str] = Form(
+        "{}", description="Additional metadata as JSON string"
+    ),
     user_context: Dict[str, str] = Depends(get_user_context),
-    deps = Depends(get_document_dependencies)
+    deps=Depends(get_document_dependencies),
 ):
     """
     Upload a new document with precise storage path control.
-    
+
     This endpoint provides flexible document upload with comprehensive validation,
     detailed logging, and proper error handling following SOLID principles.
     """
     document_service = deps["document_service"]
-    
+
     # Log upload operation start with detailed context
     log_operation_start(
         "Document upload",
@@ -182,17 +191,17 @@ async def upload_document(
         metadata=metadata,
         file_size=file.size if file else "UNKNOWN",
         content_type=file.content_type if file else "UNKNOWN",
-        **user_context
+        **user_context,
     )
-    
+
     try:
         # Parse and validate metadata JSON
         parsed_metadata = _parse_metadata(metadata)
-        
+
         # Extract user context
         org_id = user_context["org_id"]
         user_id = user_context["user_id"]
-        
+
         # Call document service to handle upload
         result = await document_service.create_document(
             org_id=org_id,
@@ -200,19 +209,19 @@ async def upload_document(
             user_id=user_id,
             folder_id=folder_id,
             target_path=target_path,
-            metadata=parsed_metadata
+            metadata=parsed_metadata,
         )
-        
+
         # Log successful upload
         log_operation_success(
             "Document upload",
             document_id=result.document.id if result.document else None,
             filename=file.filename,
-            **user_context
+            **user_context,
         )
-        
+
         return result
-        
+
     except DocumentValidationError as e:
         raise handle_document_validation_error(e, "document upload", **user_context)
     except DocumentUploadError as e:
@@ -224,13 +233,13 @@ async def upload_document(
 def _parse_metadata(metadata: Optional[str]) -> Dict[str, Any]:
     """
     Parse and validate metadata JSON string.
-    
+
     Args:
         metadata: JSON string containing metadata
-        
+
     Returns:
         Dict containing parsed metadata
-        
+
     Raises:
         HTTPException: If metadata JSON is invalid or not an object
     """
@@ -240,14 +249,16 @@ def _parse_metadata(metadata: Optional[str]) -> Dict[str, Any]:
         logger.warning("Invalid metadata JSON format", metadata=metadata)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid metadata JSON format"
+            detail="Invalid metadata JSON format",
         )
-    
+
     if not isinstance(parsed_metadata, dict):
-        logger.warning("Metadata must be JSON object", metadata_type=type(parsed_metadata).__name__)
+        logger.warning(
+            "Metadata must be JSON object", metadata_type=type(parsed_metadata).__name__
+        )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Metadata must be a JSON object"
+            detail="Metadata must be a JSON object",
         )
-    
+
     return parsed_metadata

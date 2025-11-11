@@ -3,7 +3,7 @@ Document Questions Endpoints - LangChain-based Implementation.
 
 This module provides AI-powered document questions generation endpoints:
 - Generate questions with custom count and prompts
-- Retrieve existing questions  
+- Retrieve existing questions
 - Update/regenerate questions with custom parameters
 - LangChain integration for robust question generation
 """
@@ -15,18 +15,14 @@ from app.models.schemas import (
     DocumentQuestionsRequest,
     DocumentQuestionsResponse,
     DocumentQuestionsUpdateRequest,
-    DocumentQuestionsRetrievalResponse
+    DocumentQuestionsRetrievalResponse,
 )
 from app.services.document.document_ai_service import (
     document_ai_service,
-    DocumentQuestionsError,
     QuestionsGenerationError,
-    ContentNotFoundError
+    ContentNotFoundError,
 )
-from app.services.document_service import (
-    DocumentNotFoundError,
-    DocumentValidationError
-)
+from app.services.document_service import DocumentNotFoundError, DocumentValidationError
 from app.core.simple_auth import get_current_user_dict
 from app.core.logging import get_api_logger
 
@@ -80,79 +76,93 @@ curl -X POST "http://localhost:8000/api/v1/documents/questions?file_name=Sample2
 - Includes generation metadata (model, timing, count, etc.)
 - LangChain-powered generation for higher quality results
     """,
-    status_code=status.HTTP_201_CREATED
+    status_code=status.HTTP_201_CREATED,
 )
 async def generate_document_questions(
-    file_name: str = Query(..., description="The filename of the document to generate questions for"),
+    file_name: str = Query(
+        ..., description="The filename of the document to generate questions for"
+    ),
     request: DocumentQuestionsRequest = DocumentQuestionsRequest(),
-    current_user: Dict[str, Any] = Depends(get_current_user_dict)
+    current_user: Dict[str, Any] = Depends(get_current_user_dict),
 ):
     """Generate AI-powered questions for a document using LangChain."""
     try:
         # Get user/org info from session
         org_id = current_user["org_id"]
-        
-        logger.info("Starting document questions generation", 
-                   org_id=org_id,
-                   filename=file_name,
-                   question_count=request.question_count,
-                   has_custom_prompt=bool(request.prompt))
-        
+
+        logger.info(
+            "Starting document questions generation",
+            org_id=org_id,
+            filename=file_name,
+            question_count=request.question_count,
+            has_custom_prompt=bool(request.prompt),
+        )
+
         # Generate questions using AI service
         result = await document_ai_service.generate_questions_by_filename(
             org_id=org_id,
             filename=file_name,
             question_count=request.question_count,
-            custom_prompt=request.prompt
+            custom_prompt=request.prompt,
         )
-        
+
         response = DocumentQuestionsResponse(**result)
-        
-        logger.info("Document questions generation completed successfully", 
-                   org_id=org_id,
-                   filename=file_name,
-                   question_count=len(result.get("ai_questions", [])))
-        
+
+        logger.info(
+            "Document questions generation completed successfully",
+            org_id=org_id,
+            filename=file_name,
+            question_count=len(result.get("ai_questions", [])),
+        )
+
         return response
-        
+
     except DocumentNotFoundError as e:
-        logger.warning("Document not found for questions generation", 
-                      org_id=org_id,
-                      filename=file_name,
-                      error=str(e))
+        logger.warning(
+            "Document not found for questions generation",
+            org_id=org_id,
+            filename=file_name,
+            error=str(e),
+        )
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Document with filename '{file_name}' not found"
+            detail=f"Document with filename '{file_name}' not found",
         )
-        
+
     except ContentNotFoundError as e:
-        logger.warning("Document has no content for questions generation", 
-                      org_id=org_id,
-                      filename=file_name,
-                      error=str(e))
+        logger.warning(
+            "Document has no content for questions generation",
+            org_id=org_id,
+            filename=file_name,
+            error=str(e),
+        )
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Document '{file_name}' has no parsed content. Please parse the document first."
+            detail=f"Document '{file_name}' has no parsed content. Please parse the document first.",
         )
-        
+
     except QuestionsGenerationError as e:
-        logger.error("Questions generation failed", 
-                    org_id=org_id,
-                    filename=file_name,
-                    error=str(e))
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to generate questions: {str(e)}"
+        logger.error(
+            "Questions generation failed",
+            org_id=org_id,
+            filename=file_name,
+            error=str(e),
         )
-        
-    except Exception as e:
-        logger.error("Unexpected error during questions generation", 
-                    org_id=org_id,
-                    filename=file_name,
-                    error=str(e))
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="An error occurred while generating document questions"
+            detail=f"Failed to generate questions: {str(e)}",
+        )
+
+    except Exception as e:
+        logger.error(
+            "Unexpected error during questions generation",
+            org_id=org_id,
+            filename=file_name,
+            error=str(e),
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An error occurred while generating document questions",
         )
 
 
@@ -180,54 +190,59 @@ curl -X GET "http://localhost:8000/api/v1/documents/questions?file_name=Sample2.
 - Questions count and availability status
 - Whether document has questions available
     """,
-    status_code=status.HTTP_200_OK
+    status_code=status.HTTP_200_OK,
 )
 async def get_document_questions(
-    file_name: str = Query(..., description="The filename of the document to retrieve questions for"),
-    current_user: Dict[str, Any] = Depends(get_current_user_dict)
+    file_name: str = Query(
+        ..., description="The filename of the document to retrieve questions for"
+    ),
+    current_user: Dict[str, Any] = Depends(get_current_user_dict),
 ):
     """Get existing AI questions for a document."""
     try:
         # Get user/org info from session
         org_id = current_user["org_id"]
-        
-        logger.debug("Retrieving document questions", 
-                    org_id=org_id,
-                    filename=file_name)
-        
+
+        logger.debug("Retrieving document questions", org_id=org_id, filename=file_name)
+
         # Get questions using AI service
         result = await document_ai_service.get_questions_by_filename(
-            org_id=org_id,
-            filename=file_name
+            org_id=org_id, filename=file_name
         )
-        
+
         response = DocumentQuestionsRetrievalResponse(**result)
-        
-        logger.debug("Document questions retrieved successfully", 
-                    org_id=org_id,
-                    filename=file_name,
-                    has_questions=result.get("has_questions", False))
-        
+
+        logger.debug(
+            "Document questions retrieved successfully",
+            org_id=org_id,
+            filename=file_name,
+            has_questions=result.get("has_questions", False),
+        )
+
         return response
-        
+
     except DocumentNotFoundError as e:
-        logger.warning("Document not found for questions retrieval", 
-                      org_id=org_id,
-                      filename=file_name,
-                      error=str(e))
+        logger.warning(
+            "Document not found for questions retrieval",
+            org_id=org_id,
+            filename=file_name,
+            error=str(e),
+        )
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Document with filename '{file_name}' not found"
+            detail=f"Document with filename '{file_name}' not found",
         )
-        
+
     except Exception as e:
-        logger.error("Error retrieving document questions", 
-                    org_id=org_id,
-                    filename=file_name,
-                    error=str(e))
+        logger.error(
+            "Error retrieving document questions",
+            org_id=org_id,
+            filename=file_name,
+            error=str(e),
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="An error occurred while retrieving document questions"
+            detail="An error occurred while retrieving document questions",
         )
 
 
@@ -273,105 +288,115 @@ curl -X PUT "http://localhost:8000/api/v1/documents/questions?file_name=Sample2.
 
 **Note:** You must provide either `questions` OR (`prompt` with optional `question_count`), not both.
     """,
-    status_code=status.HTTP_200_OK
+    status_code=status.HTTP_200_OK,
 )
 async def update_document_questions(
     request: DocumentQuestionsUpdateRequest,
-    file_name: str = Query(..., description="The filename of the document to update questions for"),
-    current_user: Dict[str, Any] = Depends(get_current_user_dict)
+    file_name: str = Query(
+        ..., description="The filename of the document to update questions for"
+    ),
+    current_user: Dict[str, Any] = Depends(get_current_user_dict),
 ):
     """Update or regenerate AI questions for a document."""
     try:
         # Get user/org info from session
         org_id = current_user["org_id"]
-        
+
         # Validate that either questions or prompt is provided
         if request.questions is None and not request.prompt:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="Either 'questions' or 'prompt' must be provided"
+                detail="Either 'questions' or 'prompt' must be provided",
             )
-        
+
         if request.questions is not None and request.prompt:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="Provide either 'questions' OR 'prompt', not both"
+                detail="Provide either 'questions' OR 'prompt', not both",
             )
-        
-        logger.info("Updating document questions", 
-                   org_id=org_id,
-                   filename=file_name,
-                   update_type="direct" if request.questions else "regenerate")
-        
+
+        logger.info(
+            "Updating document questions",
+            org_id=org_id,
+            filename=file_name,
+            update_type="direct" if request.questions else "regenerate",
+        )
+
         # Update questions using AI service
         result = await document_ai_service.update_questions_by_filename(
             org_id=org_id,
             filename=file_name,
             questions=request.questions,
             custom_prompt=request.prompt,
-            question_count=request.question_count
+            question_count=request.question_count,
         )
-        
+
         response = DocumentQuestionsResponse(**result)
-        
-        logger.info("Document questions updated successfully", 
-                   org_id=org_id,
-                   filename=file_name,
-                   update_type=result.get("update_type"),
-                   question_count=len(result.get("ai_questions", [])))
-        
+
+        logger.info(
+            "Document questions updated successfully",
+            org_id=org_id,
+            filename=file_name,
+            update_type=result.get("update_type"),
+            question_count=len(result.get("ai_questions", [])),
+        )
+
         return response
-        
+
     except DocumentNotFoundError as e:
-        logger.warning("Document not found for questions update", 
-                      org_id=org_id,
-                      filename=file_name,
-                      error=str(e))
+        logger.warning(
+            "Document not found for questions update",
+            org_id=org_id,
+            filename=file_name,
+            error=str(e),
+        )
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Document with filename '{file_name}' not found"
+            detail=f"Document with filename '{file_name}' not found",
         )
-        
+
     except DocumentValidationError as e:
-        logger.warning("Invalid request for questions update", 
-                      org_id=org_id,
-                      filename=file_name,
-                      error=str(e))
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=str(e)
+        logger.warning(
+            "Invalid request for questions update",
+            org_id=org_id,
+            filename=file_name,
+            error=str(e),
         )
-        
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e)
+        )
+
     except ContentNotFoundError as e:
-        logger.warning("Document has no content for questions regeneration", 
-                      org_id=org_id,
-                      filename=file_name,
-                      error=str(e))
+        logger.warning(
+            "Document has no content for questions regeneration",
+            org_id=org_id,
+            filename=file_name,
+            error=str(e),
+        )
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Document '{file_name}' has no parsed content. Cannot regenerate questions."
+            detail=f"Document '{file_name}' has no parsed content. Cannot regenerate questions.",
         )
-        
+
     except QuestionsGenerationError as e:
-        logger.error("Questions update failed", 
-                    org_id=org_id,
-                    filename=file_name,
-                    error=str(e))
+        logger.error(
+            "Questions update failed", org_id=org_id, filename=file_name, error=str(e)
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to update questions: {str(e)}"
+            detail=f"Failed to update questions: {str(e)}",
         )
-        
+
     except HTTPException:
         raise  # Re-raise HTTPException to let FastAPI handle it properly
     except Exception as e:
-        logger.error("Unexpected error during questions update",
-                    org_id=org_id,
-                    filename=file_name,
-                    error=str(e))
+        logger.error(
+            "Unexpected error during questions update",
+            org_id=org_id,
+            filename=file_name,
+            error=str(e),
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="An error occurred while updating document questions"
+            detail="An error occurred while updating document questions",
         )
-
-

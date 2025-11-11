@@ -8,13 +8,13 @@ This module handles AI-generated content operations, focusing on:
 - Metadata tracking for AI content
 """
 
-from typing import Dict, Any
+from typing import Dict
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.models.schemas import (
     DocumentAIContentRequest,
     DocumentAIContentResponse,
-    DocumentResponse
+    DocumentResponse,
 )
 from app.services.document_service import DocumentNotFoundError
 from .common import (
@@ -23,7 +23,7 @@ from .common import (
     handle_document_not_found_error,
     handle_generic_error,
     log_operation_start,
-    log_operation_success
+    log_operation_success,
 )
 
 router = APIRouter()
@@ -106,17 +106,17 @@ curl -X GET "http://localhost:8000/api/v1/documents/doc123/ai-content" \\
                                 "faq": [
                                     {
                                         "question": "What is the payment due date?",
-                                        "answer": "Payment is due within 30 days."
+                                        "answer": "Payment is due within 30 days.",
                                     }
                                 ],
                                 "questions": [
                                     "What is the total amount due?",
-                                    "What services were provided?"
+                                    "What services were provided?",
                                 ],
                                 "has_ai_content": True,
                                 "ai_content_size": 1250,
-                                "updated_at": "2025-08-15T10:12:36.993659"
-                            }
+                                "updated_at": "2025-08-15T10:12:36.993659",
+                            },
                         },
                         "no_content": {
                             "summary": "Document without AI content",
@@ -128,65 +128,66 @@ curl -X GET "http://localhost:8000/api/v1/documents/doc123/ai-content" \\
                                 "questions": [],
                                 "has_ai_content": False,
                                 "ai_content_size": 0,
-                                "updated_at": "2025-08-15T10:12:36.993659"
-                            }
-                        }
+                                "updated_at": "2025-08-15T10:12:36.993659",
+                            },
+                        },
                     }
                 }
-            }
+            },
         },
         404: {
             "description": "Document not found",
             "content": {
-                "application/json": {
-                    "example": {"detail": "Document not found"}
-                }
-            }
+                "application/json": {"example": {"detail": "Document not found"}}
+            },
         },
         500: {
             "description": "Server error retrieving AI content",
             "content": {
                 "application/json": {
-                    "example": {"detail": "An error occurred while retrieving AI content"}
+                    "example": {
+                        "detail": "An error occurred while retrieving AI content"
+                    }
                 }
-            }
-        }
-    }
+            },
+        },
+    },
 )
 async def get_document_ai_content(
     document_id: str,
     user_context: Dict[str, str] = Depends(get_user_context),
-    deps = Depends(get_document_dependencies)
+    deps=Depends(get_document_dependencies),
 ) -> DocumentAIContentResponse:
     """
     Get AI-generated content for a document.
-    
+
     Retrieves all available AI-generated content including summary, FAQ items,
     and questions with metadata about content availability and freshness.
     """
     document_service = deps["document_service"]
     org_id = user_context["org_id"]
-    
+
     try:
-        log_operation_start("AI content retrieval", document_id=document_id, **user_context)
-        
+        log_operation_start(
+            "AI content retrieval", document_id=document_id, **user_context
+        )
+
         # Get AI content using DocumentService
         ai_content = await document_service.get_document_ai_content(
-            org_id=org_id,
-            document_id=document_id
+            org_id=org_id, document_id=document_id
         )
-        
+
         log_operation_success(
             "AI content retrieval",
             document_id=document_id,
             has_summary=ai_content["summary"] is not None,
             faq_count=len(ai_content["faq"]),
             question_count=len(ai_content["questions"]),
-            **user_context
+            **user_context,
         )
-        
+
         return DocumentAIContentResponse(**ai_content)
-        
+
     except DocumentNotFoundError as e:
         raise handle_document_not_found_error(e, "AI content retrieval", **user_context)
     except Exception as e:
@@ -273,17 +274,17 @@ Returns the complete updated document with all fields including the new AI conte
                         "faq": [
                             {
                                 "question": "What is the payment due date?",
-                                "answer": "Payment is due within 30 days."
+                                "answer": "Payment is due within 30 days.",
                             }
                         ],
                         "questions": [
                             "What is the total amount due?",
-                            "What services were provided?"
+                            "What services were provided?",
                         ],
-                        "updated_at": "2025-08-15T10:12:36.993659"
+                        "updated_at": "2025-08-15T10:12:36.993659",
                     }
                 }
-            }
+            },
         },
         400: {
             "description": "Validation error",
@@ -292,27 +293,31 @@ Returns the complete updated document with all fields including the new AI conte
                     "examples": {
                         "invalid_faq": {
                             "summary": "Invalid FAQ structure",
-                            "value": {"detail": "FAQ items must have both 'question' and 'answer' fields"}
+                            "value": {
+                                "detail": "FAQ items must have both 'question' and 'answer' fields"
+                            },
                         },
                         "content_too_large": {
                             "summary": "Content size limit exceeded",
-                            "value": {"detail": "Summary content exceeds maximum size limit of 10KB"}
+                            "value": {
+                                "detail": "Summary content exceeds maximum size limit of 10KB"
+                            },
                         },
                         "empty_request": {
                             "summary": "No content provided",
-                            "value": {"detail": "At least one AI content field (summary, faq, or questions) must be provided"}
-                        }
+                            "value": {
+                                "detail": "At least one AI content field (summary, faq, or questions) must be provided"
+                            },
+                        },
                     }
                 }
-            }
+            },
         },
         404: {
             "description": "Document not found",
             "content": {
-                "application/json": {
-                    "example": {"detail": "Document not found"}
-                }
-            }
+                "application/json": {"example": {"detail": "Document not found"}}
+            },
         },
         500: {
             "description": "Server error updating AI content",
@@ -320,69 +325,69 @@ Returns the complete updated document with all fields including the new AI conte
                 "application/json": {
                     "example": {"detail": "An error occurred while updating AI content"}
                 }
-            }
-        }
-    }
+            },
+        },
+    },
 )
 async def update_document_ai_content(
     document_id: str,
     request: DocumentAIContentRequest,
     user_context: Dict[str, str] = Depends(get_user_context),
-    deps = Depends(get_document_dependencies)
+    deps=Depends(get_document_dependencies),
 ) -> DocumentResponse:
     """
     Update AI-generated content for a document.
-    
+
     Performs partial updates of AI content fields with comprehensive validation,
     size limits, and atomic operation guarantees. All provided fields are
     validated before any updates are made.
     """
     document_service = deps["document_service"]
     org_id = user_context["org_id"]
-    
+
     try:
         # Validate that at least one field is provided
-        if not any([
-            request.summary is not None,
-            request.faq is not None and len(request.faq) > 0,
-            request.questions is not None and len(request.questions) > 0
-        ]):
+        if not any(
+            [
+                request.summary is not None,
+                request.faq is not None and len(request.faq) > 0,
+                request.questions is not None and len(request.questions) > 0,
+            ]
+        ):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="At least one AI content field (summary, faq, or questions) must be provided"
+                detail="At least one AI content field (summary, faq, or questions) must be provided",
             )
-        
+
         log_operation_start(
             "AI content update",
             document_id=document_id,
             has_summary=request.summary is not None,
             has_faq=request.faq is not None and len(request.faq) > 0,
             has_questions=request.questions is not None and len(request.questions) > 0,
-            **user_context
+            **user_context,
         )
-        
+
         # Update AI content using DocumentService
         updated_document = await document_service.update_document_ai_content(
             org_id=org_id,
             document_id=document_id,
             summary=request.summary,
             faq=request.faq,
-            questions=request.questions
+            questions=request.questions,
         )
-        
+
         log_operation_success(
             "AI content update",
             document_id=document_id,
             has_ai_content=updated_document.has_ai_content,
             ai_content_size=updated_document.ai_content_size,
-            **user_context
+            **user_context,
         )
-        
+
         return updated_document
-        
+
     except DocumentNotFoundError as e:
         raise handle_document_not_found_error(e, "AI content update", **user_context)
     except Exception as e:
         raise handle_generic_error(e, "AI content update", **user_context)
-
-

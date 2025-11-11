@@ -1,9 +1,6 @@
-import sys
 import logging
 import logging.config
 import asyncio
-from typing import Any, Dict
-from pythonjsonlogger import jsonlogger
 import structlog
 
 from app.core.config import settings
@@ -11,7 +8,7 @@ from app.core.config import settings
 
 def configure_logging() -> None:
     """Configure application logging based on settings."""
-    
+
     # Configure structlog
     structlog.configure(
         processors=[
@@ -23,14 +20,18 @@ def configure_logging() -> None:
             structlog.processors.StackInfoRenderer(),
             structlog.processors.format_exc_info,
             structlog.processors.UnicodeDecoder(),
-            structlog.processors.JSONRenderer() if settings.LOG_FORMAT == "json" else structlog.dev.ConsoleRenderer()
+            (
+                structlog.processors.JSONRenderer()
+                if settings.LOG_FORMAT == "json"
+                else structlog.dev.ConsoleRenderer()
+            ),
         ],
         context_class=dict,
         logger_factory=structlog.stdlib.LoggerFactory(),
         wrapper_class=structlog.stdlib.BoundLogger,
         cache_logger_on_first_use=True,
     )
-    
+
     # Configure standard logging
     if settings.LOG_FORMAT == "json":
         formatter_class = "pythonjsonlogger.jsonlogger.JsonFormatter"
@@ -38,7 +39,7 @@ def configure_logging() -> None:
     else:
         formatter_class = "logging.Formatter"
         format_string = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-    
+
     # Base logging configuration
     logging_config = {
         "version": 1,
@@ -117,12 +118,12 @@ def configure_logging() -> None:
             },
         },
     }
-    
+
     # Note: File logging removed for simplified setup
-    
+
     # Apply configuration
     logging.config.dictConfig(logging_config)
-    
+
     # Set log levels for specific loggers based on environment
     if settings.DEBUG:
         # Firebase/Firestore loggers for development
@@ -138,11 +139,11 @@ def configure_logging() -> None:
 
 class RequestLoggingMiddleware:
     """Middleware for logging HTTP requests and responses."""
-    
+
     def __init__(self, app):
         self.app = app
         self.logger = structlog.get_logger("request")
-    
+
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http":
             await self.app(scope, receive, send)
@@ -159,20 +160,21 @@ class RequestLoggingMiddleware:
             "headers": {
                 key.decode(): value.decode()
                 for key, value in scope.get("headers", [])
-                if key.lower() in [b"user-agent", b"content-type", b"authorization", b"content-length"]
+                if key.lower()
+                in [b"user-agent", b"content-type", b"authorization", b"content-length"]
             },
         }
-        
+
         # Add special handling for file uploads
         content_type = ""
         for key, value in scope.get("headers", []):
             if key.lower() == b"content-type":
                 content_type = value.decode()
                 break
-        
+
         if "multipart/form-data" in content_type:
             request_info["is_file_upload"] = True
-        
+
         # Remove sensitive data from headers
         if "authorization" in request_info["headers"]:
             request_info["headers"]["authorization"] = "***"
@@ -183,16 +185,16 @@ class RequestLoggingMiddleware:
                 self.logger.info("🔥 POST REQUEST DETECTED", **request_info)
             else:
                 self.logger.info("Request started", **request_info)
-        
+
         # Process request - record start time when request begins
         start_time = asyncio.get_event_loop().time()
-        
+
         async def send_wrapper(message):
             nonlocal start_time
-            
+
             if message["type"] == "http.response.start":
                 status_code = message["status"]
-                
+
                 # Log response - skip health checks to reduce noise
                 if not is_health_check:
                     response_info = {
@@ -202,24 +204,28 @@ class RequestLoggingMiddleware:
                             key.decode(): value.decode()
                             for key, value in message.get("headers", [])
                             if key.lower() in [b"content-type", b"content-length"]
-                        }
+                        },
                     }
 
                     self.logger.info("Response started", **response_info)
-                
-            elif message["type"] == "http.response.body" and not message.get("more_body", False):
+
+            elif message["type"] == "http.response.body" and not message.get(
+                "more_body", False
+            ):
                 # Request completed - calculate total duration from request start
                 duration = asyncio.get_event_loop().time() - start_time
 
                 # Skip completion logging for health checks to reduce noise
                 if not is_health_check:
-                    self.logger.info("Request completed",
-                                   method=request_info["method"],
-                                   path=request_info["path"],
-                                   duration=round(duration, 4))
-            
+                    self.logger.info(
+                        "Request completed",
+                        method=request_info["method"],
+                        path=request_info["path"],
+                        duration=round(duration, 4),
+                    )
+
             await send(message)
-        
+
         await self.app(scope, receive, send_wrapper)
 
 
@@ -228,9 +234,10 @@ class CorrelationIdFilter(logging.Filter):
 
     def filter(self, record):
         # Get correlation ID from context (e.g., from FastAPI request state)
-        correlation_id = getattr(record, 'correlation_id', None)
+        correlation_id = getattr(record, "correlation_id", None)
         if not correlation_id:
             import uuid
+
             correlation_id = str(uuid.uuid4())[:8]
 
         record.correlation_id = correlation_id
@@ -242,12 +249,12 @@ class HealthCheckFilter(logging.Filter):
 
     def filter(self, record):
         # Check if the log record contains health check endpoints
-        message = getattr(record, 'getMessage', lambda: '')()
+        message = getattr(record, "getMessage", lambda: "")()
         if callable(message):
             message = message()
 
         # Filter out health check endpoints
-        health_endpoints = ['/health', '/ready', '/live']
+        health_endpoints = ["/health", "/ready", "/live"]
         for endpoint in health_endpoints:
             if endpoint in message:
                 return False

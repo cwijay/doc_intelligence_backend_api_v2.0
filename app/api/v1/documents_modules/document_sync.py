@@ -8,13 +8,17 @@ This module handles document synchronization and validation operations, focusing
 - Rich relationship data and metadata queries
 """
 
-from typing import Dict, Any, Optional
-from fastapi import APIRouter, Query, Depends, HTTPException, status
+from typing import Dict, Optional
+from fastapi import APIRouter, Query, Depends
 
 from app.models.schemas import (
-    DocumentSyncValidationResponse, DocumentFirestoreResponse,
-    DocumentFirestoreFolderListResponse, PaginationParams, DocumentFilters,
-    FileType, DocumentStatus
+    DocumentSyncValidationResponse,
+    DocumentFirestoreResponse,
+    DocumentFirestoreFolderListResponse,
+    PaginationParams,
+    DocumentFilters,
+    FileType,
+    DocumentStatus,
 )
 from app.services.document_service import DocumentNotFoundError
 from .common import (
@@ -24,14 +28,13 @@ from .common import (
     handle_generic_error,
     log_operation_start,
     log_operation_success,
-    logger
 )
 
 router = APIRouter()
 
 
 @router.get(
-    "/sync/validate", 
+    "/sync/validate",
     response_model=DocumentSyncValidationResponse,
     summary="🔄 Validate Document Sync",
     description="""Validate sync between Firestore documents and GCS files.
@@ -103,12 +106,14 @@ curl -X GET "http://localhost:8000/api/v1/documents/sync/validate?folder_id=fold
                                     "issues_found": 0,
                                     "orphaned_files": 0,
                                     "missing_files": 0,
-                                    "duplicate_paths": 0
+                                    "duplicate_paths": 0,
                                 },
                                 "issues": [],
-                                "recommendations": ["No issues found. System is healthy."],
-                                "timestamp": "2025-08-15T10:12:36.993659"
-                            }
+                                "recommendations": [
+                                    "No issues found. System is healthy."
+                                ],
+                                "timestamp": "2025-08-15T10:12:36.993659",
+                            },
                         },
                         "issues_found": {
                             "summary": "Issues detected requiring attention",
@@ -120,7 +125,7 @@ curl -X GET "http://localhost:8000/api/v1/documents/sync/validate?folder_id=fold
                                     "issues_found": 3,
                                     "orphaned_files": 1,
                                     "missing_files": 2,
-                                    "duplicate_paths": 0
+                                    "duplicate_paths": 0,
                                 },
                                 "issues": [
                                     {
@@ -128,25 +133,25 @@ curl -X GET "http://localhost:8000/api/v1/documents/sync/validate?folder_id=fold
                                         "severity": "high",
                                         "description": "Document doc123 references missing GCS file",
                                         "document_id": "doc123",
-                                        "storage_path": "Google/original/invoices/missing-file.pdf"
+                                        "storage_path": "Google/original/invoices/missing-file.pdf",
                                     },
                                     {
                                         "type": "orphaned_gcs_file",
                                         "severity": "medium",
                                         "description": "GCS file exists without Firestore metadata",
-                                        "storage_path": "Google/original/reports/orphaned.xlsx"
-                                    }
+                                        "storage_path": "Google/original/reports/orphaned.xlsx",
+                                    },
                                 ],
                                 "recommendations": [
                                     "Remove or re-upload missing files",
-                                    "Create metadata for orphaned files or delete them"
+                                    "Create metadata for orphaned files or delete them",
                                 ],
-                                "timestamp": "2025-08-15T10:12:36.993659"
-                            }
-                        }
+                                "timestamp": "2025-08-15T10:12:36.993659",
+                            },
+                        },
                     }
                 }
-            }
+            },
         },
         401: {"description": "Authentication required"},
         500: {
@@ -155,42 +160,45 @@ curl -X GET "http://localhost:8000/api/v1/documents/sync/validate?folder_id=fold
                 "application/json": {
                     "example": {"detail": "An error occurred during sync validation"}
                 }
-            }
-        }
-    }
+            },
+        },
+    },
 )
 async def validate_document_sync(
-    folder_id: Optional[str] = Query(None, description="Filter by folder ID (optional)"),
+    folder_id: Optional[str] = Query(
+        None, description="Filter by folder ID (optional)"
+    ),
     user_context: Dict[str, str] = Depends(get_user_context),
-    deps = Depends(get_document_dependencies)
+    deps=Depends(get_document_dependencies),
 ):
     """
     Validate sync between Firestore documents and GCS files.
-    
+
     Performs comprehensive health checks to ensure data consistency
     between metadata store (Firestore) and file storage (GCS).
     """
     document_service = deps["document_service"]
     org_id = user_context["org_id"]
-    
+
     try:
-        log_operation_start("Document sync validation", folder_id=folder_id, **user_context)
-        
-        result = await document_service.validate_sync(
-            org_id=org_id,
-            folder_id=folder_id
+        log_operation_start(
+            "Document sync validation", folder_id=folder_id, **user_context
         )
-        
+
+        result = await document_service.validate_sync(
+            org_id=org_id, folder_id=folder_id
+        )
+
         log_operation_success(
             "Document sync validation",
             folder_id=folder_id,
             sync_status=result["sync_status"],
             issues_count=result["summary"].get("issues_found", 0),
-            **user_context
+            **user_context,
         )
-        
+
         return DocumentSyncValidationResponse(**result)
-        
+
     except Exception as e:
         raise handle_generic_error(e, "sync validation", **user_context)
 
@@ -262,7 +270,7 @@ curl -X GET "http://localhost:8000/api/v1/documents/firestore/by-filename/contra
                         "search_criteria": {
                             "filename": "invoice-2025-001.pdf",
                             "exact_match": True,
-                            "include_inactive": False
+                            "include_inactive": False,
                         },
                         "document": {
                             "id": "78258b82-db53-41a3-848a-ce45a32f99c7",
@@ -271,26 +279,26 @@ curl -X GET "http://localhost:8000/api/v1/documents/firestore/by-filename/contra
                             "file_size": 1024567,
                             "status": "processed",
                             "org_id": "oJIChgDgktkF30dAPy2c",
-                            "created_at": "2025-08-15T10:12:36.993659"
+                            "created_at": "2025-08-15T10:12:36.993659",
                         },
                         "firestore_metadata": {
                             "document_ref": "organizations/{org_id}/documents/{doc_id}",
                             "query_method": "filename_exact_match",
-                            "last_updated": "2025-08-15T11:35:22.987654"
+                            "last_updated": "2025-08-15T11:35:22.987654",
                         },
                         "relationships": {
                             "organization": {
                                 "id": "oJIChgDgktkF30dAPy2c",
-                                "name": "Google"
+                                "name": "Google",
                             },
                             "uploader": {
                                 "id": "jhYXgm0s4avwacnBSXH9",
-                                "email": "user@example.com"
-                            }
-                        }
+                                "email": "user@example.com",
+                            },
+                        },
                     }
                 }
-            }
+            },
         },
         404: {
             "description": "Document not found",
@@ -299,72 +307,84 @@ curl -X GET "http://localhost:8000/api/v1/documents/firestore/by-filename/contra
                     "examples": {
                         "not_found_exact": {
                             "summary": "Exact filename not found",
-                            "value": {"detail": "No document found with filename 'nonexistent.pdf' using exact match"}
+                            "value": {
+                                "detail": "No document found with filename 'nonexistent.pdf' using exact match"
+                            },
                         },
                         "not_found_partial": {
                             "summary": "Partial filename not found",
-                            "value": {"detail": "No document found with filename 'xyz' using partial match"}
-                        }
+                            "value": {
+                                "detail": "No document found with filename 'xyz' using partial match"
+                            },
+                        },
                     }
                 }
-            }
+            },
         },
         401: {"description": "Authentication required"},
         500: {
             "description": "Search error",
             "content": {
                 "application/json": {
-                    "example": {"detail": "An error occurred while searching for document"}
+                    "example": {
+                        "detail": "An error occurred while searching for document"
+                    }
                 }
-            }
-        }
-    }
+            },
+        },
+    },
 )
 async def get_document_by_filename_firestore(
     filename: str,
-    exact_match: bool = Query(True, description="Whether to match exact filename (true) or partial (false)"),
-    include_inactive: bool = Query(False, description="Whether to include soft-deleted documents"),
+    exact_match: bool = Query(
+        True, description="Whether to match exact filename (true) or partial (false)"
+    ),
+    include_inactive: bool = Query(
+        False, description="Whether to include soft-deleted documents"
+    ),
     user_context: Dict[str, str] = Depends(get_user_context),
-    deps = Depends(get_document_dependencies)
+    deps=Depends(get_document_dependencies),
 ):
     """
     Get document by filename using Firestore as the primary data source.
-    
+
     Demonstrates proper Firestore-first architecture with indexed queries,
     rich relationship data, and comprehensive document information.
     """
     document_service = deps["document_service"]
     org_id = user_context["org_id"]
-    
+
     try:
         log_operation_start(
             "Firestore filename search",
             filename=filename,
             exact_match=exact_match,
             include_inactive=include_inactive,
-            **user_context
+            **user_context,
         )
-        
+
         result = await document_service.get_document_by_filename_from_firestore(
             org_id=org_id,
             filename=filename,
             exact_match=exact_match,
-            include_inactive=include_inactive
+            include_inactive=include_inactive,
         )
-        
+
         log_operation_success(
             "Firestore filename search",
             filename=filename,
             document_id=result.document.id,
             exact_match=exact_match,
             query_method=result.firestore_metadata.query_method,
-            **user_context
+            **user_context,
         )
-        
+
         return result
-        
+
     except DocumentNotFoundError as e:
-        raise handle_document_not_found_error(e, "Firestore filename search", **user_context)
+        raise handle_document_not_found_error(
+            e, "Firestore filename search", **user_context
+        )
     except Exception as e:
         raise handle_generic_error(e, "Firestore filename search", **user_context)
 
@@ -447,14 +467,14 @@ curl -X GET "http://localhost:8000/api/v1/documents/firestore/by-folder-name/rep
                                 "filename": "invoice-2025-001.pdf",
                                 "file_type": "pdf",
                                 "status": "parsed",
-                                "created_at": "2025-08-15T10:12:36.993659"
+                                "created_at": "2025-08-15T10:12:36.993659",
                             }
                         ],
                         "folder_info": {
                             "id": "folder_123",
                             "name": "invoices",
                             "path": "/invoices",
-                            "document_count": 15
+                            "document_count": 15,
                         },
                         "total": 15,
                         "page": 1,
@@ -462,52 +482,66 @@ curl -X GET "http://localhost:8000/api/v1/documents/firestore/by-folder-name/rep
                         "total_pages": 1,
                         "firestore_metadata": {
                             "query_method": "folder_name_exact_match",
-                            "filters_applied": ["file_type", "status"]
-                        }
+                            "filters_applied": ["file_type", "status"],
+                        },
                     }
                 }
-            }
+            },
         },
         404: {
             "description": "Folder not found",
             "content": {
                 "application/json": {
-                    "example": {"detail": "No folder found with name 'nonexistent-folder' using exact match"}
+                    "example": {
+                        "detail": "No folder found with name 'nonexistent-folder' using exact match"
+                    }
                 }
-            }
+            },
         },
         401: {"description": "Authentication required"},
         500: {
             "description": "Search error",
             "content": {
                 "application/json": {
-                    "example": {"detail": "An error occurred while searching for documents in folder"}
+                    "example": {
+                        "detail": "An error occurred while searching for documents in folder"
+                    }
                 }
-            }
-        }
-    }
+            },
+        },
+    },
 )
 async def list_documents_by_folder_name_firestore(
     folder_name: str,
     page: int = Query(1, ge=1, description="Page number"),
     per_page: int = Query(20, ge=1, le=100, description="Items per page"),
-    exact_match: bool = Query(True, description="Whether to match exact folder name (true) or partial (false)"),
-    include_inactive: bool = Query(False, description="Whether to include soft-deleted documents"),
-    file_type: Optional[FileType] = Query(None, description="Filter by file type (pdf or xlsx)"),
-    document_status: Optional[DocumentStatus] = Query(None, description="Filter by processing status"),
-    filename: Optional[str] = Query(None, description="Filter by filename within folder (partial match)"),
+    exact_match: bool = Query(
+        True, description="Whether to match exact folder name (true) or partial (false)"
+    ),
+    include_inactive: bool = Query(
+        False, description="Whether to include soft-deleted documents"
+    ),
+    file_type: Optional[FileType] = Query(
+        None, description="Filter by file type (pdf or xlsx)"
+    ),
+    document_status: Optional[DocumentStatus] = Query(
+        None, description="Filter by processing status"
+    ),
+    filename: Optional[str] = Query(
+        None, description="Filter by filename within folder (partial match)"
+    ),
     user_context: Dict[str, str] = Depends(get_user_context),
-    deps = Depends(get_document_dependencies)
+    deps=Depends(get_document_dependencies),
 ):
     """
     List documents in a folder by folder name using Firestore as the primary data source.
-    
+
     Demonstrates proper Firestore-first architecture with natural folder name search,
     efficient pagination, and comprehensive filtering capabilities.
     """
     document_service = deps["document_service"]
     org_id = user_context["org_id"]
-    
+
     try:
         log_operation_start(
             "Firestore folder document listing",
@@ -519,28 +553,26 @@ async def list_documents_by_folder_name_firestore(
             file_type=file_type.value if file_type else None,
             document_status=document_status.value if document_status else None,
             filename=filename,
-            **user_context
+            **user_context,
         )
-        
+
         # Build pagination parameters
         pagination = PaginationParams(page=page, per_page=per_page)
-        
+
         # Build additional filters
         additional_filters = DocumentFilters(
-            file_type=file_type,
-            status=document_status,
-            filename=filename
+            file_type=file_type, status=document_status, filename=filename
         )
-        
+
         result = await document_service.get_documents_by_folder_name_from_firestore(
             org_id=org_id,
             folder_name=folder_name,
             pagination=pagination,
             exact_match=exact_match,
             include_inactive=include_inactive,
-            additional_filters=additional_filters
+            additional_filters=additional_filters,
         )
-        
+
         log_operation_success(
             "Firestore folder document listing",
             folder_name=folder_name,
@@ -550,12 +582,16 @@ async def list_documents_by_folder_name_firestore(
             page=page,
             exact_match=exact_match,
             query_method=result.firestore_metadata.query_method,
-            **user_context
+            **user_context,
         )
-        
+
         return result
-        
+
     except DocumentNotFoundError as e:
-        raise handle_document_not_found_error(e, "Firestore folder search", **user_context)
+        raise handle_document_not_found_error(
+            e, "Firestore folder search", **user_context
+        )
     except Exception as e:
-        raise handle_generic_error(e, "Firestore folder document listing", **user_context)
+        raise handle_generic_error(
+            e, "Firestore folder document listing", **user_context
+        )

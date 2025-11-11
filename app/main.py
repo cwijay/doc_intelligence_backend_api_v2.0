@@ -6,7 +6,6 @@ from fastapi import FastAPI, Request, status, Depends, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import JSONResponse
-from fastapi.security import HTTPBearer
 from fastapi.openapi.utils import get_openapi
 
 # Import models for the direct route handler
@@ -42,11 +41,11 @@ async def lifespan(app: FastAPI):
         project_name=settings.PROJECT_NAME,
         version=settings.VERSION,
         environment=settings.ENVIRONMENT,
-        debug=settings.DEBUG
+        debug=settings.DEBUG,
     )
-    
+
     startup_tasks = []
-    
+
     # Initialize Firebase connection
     try:
         await init_firebase()
@@ -55,29 +54,29 @@ async def lifespan(app: FastAPI):
         logger.error("Failed to initialize Firebase", error=str(e))
         if settings.ENVIRONMENT.lower() == "production":
             raise
-    
+
     # Additional services can be initialized here
     # (Redis, Pinecone, etc. when implemented)
-    
+
     logger.info("Application startup completed", tasks=startup_tasks)
-    
+
     yield
-    
+
     # Shutdown
     logger.info("Shutting down application")
-    
+
     shutdown_tasks = []
-    
+
     # Close Firebase connections
     try:
         await close_firebase()
         shutdown_tasks.append("Firebase closed")
     except Exception as e:
         logger.error("Error closing Firebase", error=str(e))
-    
+
     # Close additional services here when implemented
     # (Redis, Pinecone, etc.)
-    
+
     logger.info("Application shutdown completed", tasks=shutdown_tasks)
 
 
@@ -214,22 +213,17 @@ For complete Next.js integration examples, see the authentication guide.
         "url": "https://opensource.org/licenses/MIT",
     },
     servers=[
-        {
-            "url": "http://localhost:8000",
-            "description": "Development server"
-        },
-        {
-            "url": "https://your-domain.com",
-            "description": "Production server"
-        }
-    ]
+        {"url": "http://localhost:8000", "description": "Development server"},
+        {"url": "https://your-domain.com", "description": "Production server"},
+    ],
 )
+
 
 # Custom OpenAPI schema with authentication
 def custom_openapi():
     if app.openapi_schema:
         return app.openapi_schema
-    
+
     openapi_schema = get_openapi(
         title=app.title,
         version=app.version,
@@ -239,49 +233,43 @@ def custom_openapi():
         tags=[
             {
                 "name": "Authentication",
-                "description": "Session-based JWT authentication with refresh tokens"
+                "description": "Session-based JWT authentication with refresh tokens",
             },
             {
                 "name": "Documents",
-                "description": "Document upload, processing, and AI content management"
+                "description": "Document upload, processing, and AI content management",
             },
             {
-                "name": "Organizations", 
-                "description": "Multi-tenant organization management"
+                "name": "Organizations",
+                "description": "Multi-tenant organization management",
             },
-            {
-                "name": "Users",
-                "description": "User management and profiles"
-            },
+            {"name": "Users", "description": "User management and profiles"},
             {
                 "name": "Folders",
-                "description": "Document organization and folder management"
+                "description": "Document organization and folder management",
             },
             {
                 "name": "Health",
-                "description": "API health checks and status monitoring"
-            }
-        ]
+                "description": "API health checks and status monitoring",
+            },
+        ],
     )
-    
+
     # Add security schemes
     openapi_schema["components"]["securitySchemes"] = {
         "SessionAuth": {
             "type": "http",
             "scheme": "bearer",
             "bearerFormat": "UUID",
-            "description": "Session-based authentication using UUID tokens. Format: `Bearer <uuid>`. Tokens expire after 24 hours."
+            "description": "Session-based authentication using UUID tokens. Format: `Bearer <uuid>`. Tokens expire after 24 hours.",
         }
     }
-    
+
     # Add examples to components
     openapi_schema["components"]["examples"] = {
         "LoginRequest": {
             "summary": "Login request",
-            "value": {
-                "email": "user@example.com",
-                "password": "Password123!"
-            }
+            "value": {"email": "user@example.com", "password": "Password123!"},
         },
         "RegisterRequest": {
             "summary": "Registration request",
@@ -290,8 +278,8 @@ def custom_openapi():
                 "password": "Password123!",
                 "full_name": "John Doe",
                 "username": "johndoe",
-                "organization_id": "oJIChgDgktkF30dAPy2c"
-            }
+                "organization_id": "oJIChgDgktkF30dAPy2c",
+            },
         },
         "AuthResponse": {
             "summary": "Authentication response",
@@ -309,9 +297,9 @@ def custom_openapi():
                     "role": "user",
                     "org_id": "oJIChgDgktkF30dAPy2c",
                     "org_name": "Google",
-                    "session_id": "b9a85c75-15de-4a7b-b278-651eaf42383f"
-                }
-            }
+                    "session_id": "b9a85c75-15de-4a7b-b278-651eaf42383f",
+                },
+            },
         },
         "DocumentUpload": {
             "summary": "Document upload response",
@@ -324,9 +312,9 @@ def custom_openapi():
                     "file_type": "pdf",
                     "file_size": 1024567,
                     "status": "uploaded",
-                    "created_at": "2025-08-15T10:12:36Z"
-                }
-            }
+                    "created_at": "2025-08-15T10:12:36Z",
+                },
+            },
         },
         "DocumentList": {
             "summary": "Documents list with pagination",
@@ -338,13 +326,13 @@ def custom_openapi():
                         "file_type": "pdf",
                         "file_size": 1024567,
                         "status": "uploaded",
-                        "created_at": "2025-08-15T10:12:36Z"
+                        "created_at": "2025-08-15T10:12:36Z",
                     }
                 ],
                 "total": 15,
                 "page": 1,
-                "per_page": 10
-            }
+                "per_page": 10,
+            },
         },
         "ErrorResponse": {
             "summary": "Error response",
@@ -358,12 +346,12 @@ def custom_openapi():
                             {
                                 "field": "email",
                                 "message": "Invalid email format",
-                                "type": "format_error"
+                                "type": "format_error",
                             }
                         ]
-                    }
+                    },
                 }
-            }
+            },
         },
         "DocumentResponseWithAI": {
             "summary": "Document with AI content",
@@ -383,24 +371,24 @@ def custom_openapi():
                 "summary": "This quarterly report demonstrates strong performance with 15% revenue growth compared to the previous year...",
                 "faq": [
                     {
-                        "question": "What was the revenue growth in Q4 2024?", 
-                        "answer": "The company achieved 15% revenue growth compared to Q4 2023."
+                        "question": "What was the revenue growth in Q4 2024?",
+                        "answer": "The company achieved 15% revenue growth compared to Q4 2023.",
                     },
                     {
                         "question": "Which segments performed best?",
-                        "answer": "Cloud services and AI development showed the strongest growth."
-                    }
+                        "answer": "Cloud services and AI development showed the strongest growth.",
+                    },
                 ],
                 "questions": [
                     "What are the key performance indicators for this quarter?",
                     "How do these results compare to previous quarters?",
-                    "What are the growth projections for 2025?"
+                    "What are the growth projections for 2025?",
                 ],
                 "uploaded_by": "jhYXgm0s4avwacnBSXH9",
                 "is_active": True,
                 "created_at": "2024-12-15T09:30:00Z",
-                "updated_at": "2024-12-15T10:30:00Z"
-            }
+                "updated_at": "2024-12-15T10:30:00Z",
+            },
         },
         "DocumentSummarizeResponseUpdated": {
             "summary": "Updated document summarization response",
@@ -416,25 +404,28 @@ def custom_openapi():
                     "model": "gpt-4o-mini",
                     "content_length": 15420,
                     "summary_length": 542,
-                    "processing_time_ms": 1850
+                    "processing_time_ms": 1850,
                 },
                 "saved_to_firestore": True,
-                "timestamp": "2024-12-15T10:30:00Z"
-            }
-        }
+                "timestamp": "2024-12-15T10:30:00Z",
+            },
+        },
     }
-    
+
     app.openapi_schema = openapi_schema
     return app.openapi_schema
+
 
 app.openapi = custom_openapi
 
 # Add CORS middleware FIRST - must be before exception handlers for OPTIONS requests
 cors_origins = settings.resolved_cors_origins
 logger.info("=" * 80)
-logger.info("CORS CONFIGURATION",
-           environment=settings.ENVIRONMENT,
-           debug_enabled=settings.ENABLE_CORS_DEBUG)
+logger.info(
+    "CORS CONFIGURATION",
+    environment=settings.ENVIRONMENT,
+    debug_enabled=settings.ENABLE_CORS_DEBUG,
+)
 logger.info("Allowed CORS Origins:")
 for idx, origin in enumerate(cors_origins, 1):
     logger.info(f"  {idx}. {origin}")
@@ -461,7 +452,7 @@ setup_request_logging(app)
 if settings.ENVIRONMENT.lower() == "production":
     app.add_middleware(
         TrustedHostMiddleware,
-        allowed_hosts=["*"]  # Configure this properly for production
+        allowed_hosts=["*"],  # Configure this properly for production
     )
 
 
@@ -488,7 +479,7 @@ async def root() -> Dict[str, Any]:
         "docs": "/docs" if settings.DEBUG else None,
         "redoc": "/redoc" if settings.DEBUG else None,
         "health": "/health",
-        "status_endpoint": "/status"
+        "status_endpoint": "/status",
     }
 
 
@@ -504,9 +495,9 @@ async def health_check() -> Dict[str, Any]:
             "version": settings.VERSION,
             "environment": settings.ENVIRONMENT,
         }
-        
+
         return health_status
-        
+
     except Exception as e:
         logger.error("Health check failed", error=str(e))
         return JSONResponse(
@@ -515,8 +506,8 @@ async def health_check() -> Dict[str, Any]:
                 "status": "unhealthy",
                 "timestamp": time.time(),
                 "version": settings.VERSION,
-                "error": str(e)
-            }
+                "error": str(e),
+            },
         )
 
 
@@ -527,12 +518,12 @@ async def detailed_status() -> Dict[str, Any]:
     try:
         # Get Firebase health
         firebase_health = await get_firebase_health()
-        
+
         # Overall status
         overall_status = "healthy"
         if not firebase_health.get("firestore_available", False):
             overall_status = "degraded"
-        
+
         status_response = {
             "application": {
                 "name": settings.PROJECT_NAME,
@@ -558,20 +549,16 @@ async def detailed_status() -> Dict[str, Any]:
             "system": {
                 "timestamp": time.time(),
                 "uptime": time.time(),  # This would need to be calculated properly
-            }
+            },
         }
-        
+
         return status_response
-        
+
     except Exception as e:
         logger.error("Status check failed", error=str(e))
         return JSONResponse(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            content={
-                "status": "error",
-                "timestamp": time.time(),
-                "error": str(e)
-            }
+            content={"status": "error", "timestamp": time.time(), "error": str(e)},
         )
 
 
@@ -582,31 +569,24 @@ async def readiness_check() -> Dict[str, Any]:
     try:
         # Check if critical services are ready
         firebase_health = await get_firebase_health()
-        
+
         if not firebase_health.get("firestore_available", False):
             return JSONResponse(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 content={
                     "ready": False,
                     "reason": "Firestore not ready",
-                    "timestamp": time.time()
-                }
+                    "timestamp": time.time(),
+                },
             )
-        
-        return {
-            "ready": True,
-            "timestamp": time.time()
-        }
-        
+
+        return {"ready": True, "timestamp": time.time()}
+
     except Exception as e:
         logger.error("Readiness check failed", error=str(e))
         return JSONResponse(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            content={
-                "ready": False,
-                "reason": str(e),
-                "timestamp": time.time()
-            }
+            content={"ready": False, "reason": str(e), "timestamp": time.time()},
         )
 
 
@@ -614,10 +594,7 @@ async def readiness_check() -> Dict[str, Any]:
 @app.get("/live", tags=["Health"])
 async def liveness_check() -> Dict[str, Any]:
     """Liveness probe endpoint."""
-    return {
-        "alive": True,
-        "timestamp": time.time()
-    }
+    return {"alive": True, "timestamp": time.time()}
 
 
 # Metrics endpoint (basic)
@@ -641,16 +618,13 @@ async def metrics() -> Dict[str, Any]:
                 "connections": "not_implemented",
                 "queries": "not_implemented",
             },
-            "timestamp": time.time()
+            "timestamp": time.time(),
         }
     except Exception as e:
         logger.error("Metrics collection failed", error=str(e))
         return JSONResponse(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            content={
-                "error": "Metrics collection failed",
-                "timestamp": time.time()
-            }
+            content={"error": "Metrics collection failed", "timestamp": time.time()},
         )
 
 
@@ -660,58 +634,58 @@ from app.api.v1.organizations import router as organizations_router
 from app.api.v1.users import router as users_router
 from app.api.v1.password import router as password_router
 from app.api.v1.folders import router as folders_router
+
 # Import from documents_main.py file (modular structure with save-parsed endpoint)
 from app.api.v1.documents_main import router as documents_router
 from app.api.v1.debug import router as debug_router
 
 # Authentication router
 app.include_router(
-    auth_router, 
-    prefix=f"{settings.API_V1_STR}/auth", 
-    tags=["Authentication"]
+    auth_router, prefix=f"{settings.API_V1_STR}/auth", tags=["Authentication"]
 )
 
 # Organization management router
 app.include_router(
-    organizations_router, 
-    prefix=settings.API_V1_STR, 
-    tags=["Organizations"]
+    organizations_router, prefix=settings.API_V1_STR, tags=["Organizations"]
 )
 
 # User management router
-app.include_router(
-    users_router, 
-    prefix=settings.API_V1_STR, 
-    tags=["Users"]
-)
+app.include_router(users_router, prefix=settings.API_V1_STR, tags=["Users"])
 
 # Password utilities router
-app.include_router(
-    password_router, 
-    prefix=settings.API_V1_STR, 
-    tags=["Password"]
-)
+app.include_router(password_router, prefix=settings.API_V1_STR, tags=["Password"])
 
 # Folder management router
-app.include_router(
-    folders_router, 
-    prefix=settings.API_V1_STR, 
-    tags=["Folders"]
-)
+app.include_router(folders_router, prefix=settings.API_V1_STR, tags=["Folders"])
+
 
 # Direct route handler to bypass redirect issues for /api/v1/documents (no trailing slash)
 # MUST BE DEFINED BEFORE including the router to take precedence
-@app.get(f"{settings.API_V1_STR}/documents", response_model=DocumentList, include_in_schema=False)
+@app.get(
+    f"{settings.API_V1_STR}/documents",
+    response_model=DocumentList,
+    include_in_schema=False,
+)
 async def documents_no_slash_direct(
     page: int = Query(1, ge=1, description="Page number"),
     per_page: int = Query(20, ge=1, le=100, description="Items per page"),
-    filename: Optional[str] = Query(None, description="Filter by filename (partial match)"),
-    file_type: Optional[FileType] = Query(None, description="Filter by file type (pdf or xlsx)"),
-    document_status: Optional[DocumentStatus] = Query(None, description="Filter by processing status"),
-    folder_id: Optional[str] = Query(None, description="Filter by folder ID (legacy uploads)"),
-    folder_path: Optional[str] = Query(None, description="Filter by folder path (target_path uploads, e.g. 'invoices')"),
+    filename: Optional[str] = Query(
+        None, description="Filter by filename (partial match)"
+    ),
+    file_type: Optional[FileType] = Query(
+        None, description="Filter by file type (pdf or xlsx)"
+    ),
+    document_status: Optional[DocumentStatus] = Query(
+        None, description="Filter by processing status"
+    ),
+    folder_id: Optional[str] = Query(
+        None, description="Filter by folder ID (legacy uploads)"
+    ),
+    folder_path: Optional[str] = Query(
+        None, description="Filter by folder path (target_path uploads, e.g. 'invoices')"
+    ),
     uploaded_by: Optional[str] = Query(None, description="Filter by uploader user ID"),
-    current_user: Dict[str, Any] = Depends(get_current_user_dict)
+    current_user: Dict[str, Any] = Depends(get_current_user_dict),
 ):
     """Direct handler for /api/v1/documents (no trailing slash) to bypass FastAPI redirect behavior."""
     # Import the service here to avoid circular imports
@@ -726,66 +700,61 @@ async def documents_no_slash_direct(
             status=document_status,
             folder_id=folder_id,
             folder_path=folder_path,
-            uploaded_by=uploaded_by
+            uploaded_by=uploaded_by,
         )
 
         documents = await document_service.list_documents(
-            org_id=current_user["org_id"],
-            pagination=pagination,
-            filters=filters
+            org_id=current_user["org_id"], pagination=pagination, filters=filters
         )
         return documents
     except Exception as e:
-        logger.error("Failed to list documents", error=str(e), org_id=current_user["org_id"])
+        logger.error(
+            "Failed to list documents", error=str(e), org_id=current_user["org_id"]
+        )
         raise HTTPException(status_code=500, detail="Failed to retrieve documents")
+
 
 # Document management router - AFTER the direct route handler
 app.include_router(
-    documents_router,
-    prefix=f"{settings.API_V1_STR}/documents",
-    tags=["Documents"]
+    documents_router, prefix=f"{settings.API_V1_STR}/documents", tags=["Documents"]
 )
 
 # Debug router (development/staging only)
-app.include_router(
-    debug_router, 
-    prefix=settings.API_V1_STR, 
-    tags=["Debug"]
-)
+app.include_router(debug_router, prefix=settings.API_V1_STR, tags=["Debug"])
 
 # Other routers (when implemented)
 # from app.api.v1 import auth, users, documents, search, ai
-# 
+#
 # app.include_router(
-#     auth.router, 
-#     prefix=f"{settings.API_V1_STR}/auth", 
+#     auth.router,
+#     prefix=f"{settings.API_V1_STR}/auth",
 #     tags=["Authentication"]
 # )
 # app.include_router(
-#     users.router, 
-#     prefix=f"{settings.API_V1_STR}/users", 
+#     users.router,
+#     prefix=f"{settings.API_V1_STR}/users",
 #     tags=["Users"]
 # )
 # app.include_router(
-#     documents.router, 
-#     prefix=f"{settings.API_V1_STR}/documents", 
+#     documents.router,
+#     prefix=f"{settings.API_V1_STR}/documents",
 #     tags=["Documents"]
 # )
 # app.include_router(
-#     search.router, 
-#     prefix=f"{settings.API_V1_STR}/search", 
+#     search.router,
+#     prefix=f"{settings.API_V1_STR}/search",
 #     tags=["Search"]
 # )
 # app.include_router(
-#     ai.router, 
-#     prefix=f"{settings.API_V1_STR}/ai", 
+#     ai.router,
+#     prefix=f"{settings.API_V1_STR}/ai",
 #     tags=["AI Operations"]
 # )
 
 
 if __name__ == "__main__":
     import uvicorn
-    
+
     uvicorn.run(
         "app.main:app",
         host=settings.HOST,

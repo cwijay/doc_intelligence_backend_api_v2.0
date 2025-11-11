@@ -15,17 +15,14 @@ from app.models.schemas import (
     DocumentSummarizeRequest,
     DocumentSummarizeResponse,
     DocumentSummaryUpdateRequest,
-    DocumentSummaryResponse
+    DocumentSummaryResponse,
 )
 from app.services.document.document_ai_service import (
     document_ai_service,
     ContentNotFoundError,
-    SummarizationError
+    SummarizationError,
 )
-from app.services.document_service import (
-    DocumentNotFoundError,
-    DocumentValidationError
-)
+from app.services.document_service import DocumentNotFoundError, DocumentValidationError
 from app.core.simple_auth import get_current_user_dict
 from app.core.logging import get_api_logger
 
@@ -69,99 +66,122 @@ curl -X POST "http://localhost:8000/api/v1/documents/summarize?file_name=Sample2
 - Immediate access to generated content
 - Includes generation metadata (model, timing, etc.)
     """,
-    status_code=status.HTTP_201_CREATED
+    status_code=status.HTTP_201_CREATED,
 )
 async def generate_document_summary(
-    file_name: str = Query(..., description="The filename of the document to summarize"),
+    file_name: str = Query(
+        ..., description="The filename of the document to summarize"
+    ),
     request: DocumentSummarizeRequest = DocumentSummarizeRequest(),
-    current_user: Dict[str, Any] = Depends(get_current_user_dict)
+    current_user: Dict[str, Any] = Depends(get_current_user_dict),
 ):
     """Generate AI-powered summary for a document."""
     try:
         # Get user/org info from session
         org_id = current_user["org_id"]
-        
-        logger.info("Starting document summarization", 
-                   org_id=org_id,
-                   filename=file_name,
-                   has_custom_prompt=bool(request.prompt))
-        
-        # Generate summary using AI service
-        result = await document_ai_service.generate_summary_by_filename(
+
+        logger.info(
+            "Starting document summarization",
             org_id=org_id,
             filename=file_name,
-            custom_prompt=request.prompt
+            has_custom_prompt=bool(request.prompt),
+        )
+
+        # Generate summary using AI service
+        result = await document_ai_service.generate_summary_by_filename(
+            org_id=org_id, filename=file_name, custom_prompt=request.prompt
         )
 
         # Log the complete AI service response for debugging
-        logger.debug("AI service response structure",
-                    org_id=org_id,
-                    filename=file_name,
-                    result_keys=list(result.keys()) if isinstance(result, dict) else "not_dict",
-                    result_structure={k: type(v).__name__ for k, v in result.items()} if isinstance(result, dict) else "invalid")
+        logger.debug(
+            "AI service response structure",
+            org_id=org_id,
+            filename=file_name,
+            result_keys=list(result.keys()) if isinstance(result, dict) else "not_dict",
+            result_structure=(
+                {k: type(v).__name__ for k, v in result.items()}
+                if isinstance(result, dict)
+                else "invalid"
+            ),
+        )
 
         # Validate and create response with detailed error handling
         try:
             response = DocumentSummarizeResponse(**result)
         except Exception as validation_error:
-            logger.error("Failed to create DocumentSummarizeResponse",
-                        org_id=org_id,
-                        filename=file_name,
-                        validation_error=str(validation_error),
-                        ai_service_result=result if len(str(result)) < 1000 else f"result_too_large_{len(str(result))}_chars",
-                        result_keys=list(result.keys()) if isinstance(result, dict) else "not_dict")
+            logger.error(
+                "Failed to create DocumentSummarizeResponse",
+                org_id=org_id,
+                filename=file_name,
+                validation_error=str(validation_error),
+                ai_service_result=(
+                    result
+                    if len(str(result)) < 1000
+                    else f"result_too_large_{len(str(result))}_chars"
+                ),
+                result_keys=(
+                    list(result.keys()) if isinstance(result, dict) else "not_dict"
+                ),
+            )
 
             # Return a formatted error response
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Response validation failed: {str(validation_error)}"
+                detail=f"Response validation failed: {str(validation_error)}",
             )
 
-        logger.info("Document summarization completed successfully",
-                   org_id=org_id,
-                   filename=file_name,
-                   summary_length=len(result.get("ai_summary", "")))
+        logger.info(
+            "Document summarization completed successfully",
+            org_id=org_id,
+            filename=file_name,
+            summary_length=len(result.get("ai_summary", "")),
+        )
 
         return response
-        
+
     except DocumentNotFoundError as e:
-        logger.warning("Document not found for summarization", 
-                      org_id=org_id,
-                      filename=file_name,
-                      error=str(e))
+        logger.warning(
+            "Document not found for summarization",
+            org_id=org_id,
+            filename=file_name,
+            error=str(e),
+        )
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Document with filename '{file_name}' not found"
+            detail=f"Document with filename '{file_name}' not found",
         )
-        
+
     except ContentNotFoundError as e:
-        logger.warning("Document has no content for summarization", 
-                      org_id=org_id,
-                      filename=file_name,
-                      error=str(e))
+        logger.warning(
+            "Document has no content for summarization",
+            org_id=org_id,
+            filename=file_name,
+            error=str(e),
+        )
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Document '{file_name}' has no parsed content. Please parse the document first."
+            detail=f"Document '{file_name}' has no parsed content. Please parse the document first.",
         )
-        
+
     except SummarizationError as e:
-        logger.error("Summarization failed", 
-                    org_id=org_id,
-                    filename=file_name,
-                    error=str(e))
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to generate summary: {str(e)}"
+        logger.error(
+            "Summarization failed", org_id=org_id, filename=file_name, error=str(e)
         )
-        
-    except Exception as e:
-        logger.error("Unexpected error during summarization", 
-                    org_id=org_id,
-                    filename=file_name,
-                    error=str(e))
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="An error occurred while generating document summary"
+            detail=f"Failed to generate summary: {str(e)}",
+        )
+
+    except Exception as e:
+        logger.error(
+            "Unexpected error during summarization",
+            org_id=org_id,
+            filename=file_name,
+            error=str(e),
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An error occurred while generating document summary",
         )
 
 
@@ -188,54 +208,59 @@ curl -X GET "http://localhost:8000/api/v1/documents/summarize?file_name=Sample2.
 - Summary preview (first 150 characters)
 - Whether document has a summary available
     """,
-    status_code=status.HTTP_200_OK
+    status_code=status.HTTP_200_OK,
 )
 async def get_document_summary(
-    file_name: str = Query(..., description="The filename of the document to retrieve summary for"),
-    current_user: Dict[str, Any] = Depends(get_current_user_dict)
+    file_name: str = Query(
+        ..., description="The filename of the document to retrieve summary for"
+    ),
+    current_user: Dict[str, Any] = Depends(get_current_user_dict),
 ):
     """Get existing AI summary for a document."""
     try:
         # Get user/org info from session
         org_id = current_user["org_id"]
-        
-        logger.debug("Retrieving document summary", 
-                    org_id=org_id,
-                    filename=file_name)
-        
+
+        logger.debug("Retrieving document summary", org_id=org_id, filename=file_name)
+
         # Get summary using AI service
         result = await document_ai_service.get_summary_by_filename(
-            org_id=org_id,
-            filename=file_name
+            org_id=org_id, filename=file_name
         )
-        
+
         response = DocumentSummaryResponse(**result)
-        
-        logger.debug("Document summary retrieved successfully", 
-                    org_id=org_id,
-                    filename=file_name,
-                    has_summary=result.get("has_summary", False))
-        
+
+        logger.debug(
+            "Document summary retrieved successfully",
+            org_id=org_id,
+            filename=file_name,
+            has_summary=result.get("has_summary", False),
+        )
+
         return response
-        
+
     except DocumentNotFoundError as e:
-        logger.warning("Document not found for summary retrieval", 
-                      org_id=org_id,
-                      filename=file_name,
-                      error=str(e))
+        logger.warning(
+            "Document not found for summary retrieval",
+            org_id=org_id,
+            filename=file_name,
+            error=str(e),
+        )
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Document with filename '{file_name}' not found"
+            detail=f"Document with filename '{file_name}' not found",
         )
-        
+
     except Exception as e:
-        logger.error("Error retrieving document summary", 
-                    org_id=org_id,
-                    filename=file_name,
-                    error=str(e))
+        logger.error(
+            "Error retrieving document summary",
+            org_id=org_id,
+            filename=file_name,
+            error=str(e),
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="An error occurred while retrieving document summary"
+            detail="An error occurred while retrieving document summary",
         )
 
 
@@ -271,121 +296,147 @@ curl -X PUT "http://localhost:8000/api/v1/documents/summarize?file_name=Sample2.
 
 **Note:** You must provide either `summary` OR `prompt`, not both.
     """,
-    status_code=status.HTTP_200_OK
+    status_code=status.HTTP_200_OK,
 )
 async def update_document_summary(
     request: DocumentSummaryUpdateRequest,
-    file_name: str = Query(..., description="The filename of the document to update summary for"),
-    current_user: Dict[str, Any] = Depends(get_current_user_dict)
+    file_name: str = Query(
+        ..., description="The filename of the document to update summary for"
+    ),
+    current_user: Dict[str, Any] = Depends(get_current_user_dict),
 ):
     """Update or regenerate AI summary for a document."""
     try:
         # Get user/org info from session
         org_id = current_user["org_id"]
-        
+
         # Validate that either summary or prompt is provided
         if not request.summary and not request.prompt:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="Either 'summary' or 'prompt' must be provided"
+                detail="Either 'summary' or 'prompt' must be provided",
             )
-        
+
         if request.summary and request.prompt:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="Provide either 'summary' OR 'prompt', not both"
+                detail="Provide either 'summary' OR 'prompt', not both",
             )
-        
-        logger.info("Updating document summary", 
-                   org_id=org_id,
-                   filename=file_name,
-                   update_type="direct" if request.summary else "regenerate")
-        
+
+        logger.info(
+            "Updating document summary",
+            org_id=org_id,
+            filename=file_name,
+            update_type="direct" if request.summary else "regenerate",
+        )
+
         # Update summary using AI service
         result = await document_ai_service.update_summary_by_filename(
             org_id=org_id,
             filename=file_name,
             summary=request.summary,
-            custom_prompt=request.prompt
+            custom_prompt=request.prompt,
         )
 
         # Log the complete AI service response for debugging
-        logger.debug("AI service update response structure",
-                    org_id=org_id,
-                    filename=file_name,
-                    result_keys=list(result.keys()) if isinstance(result, dict) else "not_dict",
-                    result_structure={k: type(v).__name__ for k, v in result.items()} if isinstance(result, dict) else "invalid")
+        logger.debug(
+            "AI service update response structure",
+            org_id=org_id,
+            filename=file_name,
+            result_keys=list(result.keys()) if isinstance(result, dict) else "not_dict",
+            result_structure=(
+                {k: type(v).__name__ for k, v in result.items()}
+                if isinstance(result, dict)
+                else "invalid"
+            ),
+        )
 
         # Validate and create response with detailed error handling
         try:
             response = DocumentSummarizeResponse(**result)
         except Exception as validation_error:
-            logger.error("Failed to create DocumentSummarizeResponse during update",
-                        org_id=org_id,
-                        filename=file_name,
-                        validation_error=str(validation_error),
-                        ai_service_result=result if len(str(result)) < 1000 else f"result_too_large_{len(str(result))}_chars",
-                        result_keys=list(result.keys()) if isinstance(result, dict) else "not_dict")
+            logger.error(
+                "Failed to create DocumentSummarizeResponse during update",
+                org_id=org_id,
+                filename=file_name,
+                validation_error=str(validation_error),
+                ai_service_result=(
+                    result
+                    if len(str(result)) < 1000
+                    else f"result_too_large_{len(str(result))}_chars"
+                ),
+                result_keys=(
+                    list(result.keys()) if isinstance(result, dict) else "not_dict"
+                ),
+            )
 
             # Return a formatted error response
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Response validation failed during update: {str(validation_error)}"
+                detail=f"Response validation failed during update: {str(validation_error)}",
             )
 
-        logger.info("Document summary updated successfully",
-                   org_id=org_id,
-                   filename=file_name,
-                   summary_length=len(result.get("ai_summary", "")))
+        logger.info(
+            "Document summary updated successfully",
+            org_id=org_id,
+            filename=file_name,
+            summary_length=len(result.get("ai_summary", "")),
+        )
 
         return response
-        
+
     except DocumentNotFoundError as e:
-        logger.warning("Document not found for summary update", 
-                      org_id=org_id,
-                      filename=file_name,
-                      error=str(e))
+        logger.warning(
+            "Document not found for summary update",
+            org_id=org_id,
+            filename=file_name,
+            error=str(e),
+        )
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Document with filename '{file_name}' not found"
+            detail=f"Document with filename '{file_name}' not found",
         )
-        
+
     except DocumentValidationError as e:
-        logger.warning("Invalid request for summary update", 
-                      org_id=org_id,
-                      filename=file_name,
-                      error=str(e))
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=str(e)
+        logger.warning(
+            "Invalid request for summary update",
+            org_id=org_id,
+            filename=file_name,
+            error=str(e),
         )
-        
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e)
+        )
+
     except ContentNotFoundError as e:
-        logger.warning("Document has no content for summary regeneration", 
-                      org_id=org_id,
-                      filename=file_name,
-                      error=str(e))
+        logger.warning(
+            "Document has no content for summary regeneration",
+            org_id=org_id,
+            filename=file_name,
+            error=str(e),
+        )
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Document '{file_name}' has no parsed content. Cannot regenerate summary."
+            detail=f"Document '{file_name}' has no parsed content. Cannot regenerate summary.",
         )
-        
+
     except SummarizationError as e:
-        logger.error("Summary update failed", 
-                    org_id=org_id,
-                    filename=file_name,
-                    error=str(e))
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to update summary: {str(e)}"
+        logger.error(
+            "Summary update failed", org_id=org_id, filename=file_name, error=str(e)
         )
-        
-    except Exception as e:
-        logger.error("Unexpected error during summary update", 
-                    org_id=org_id,
-                    filename=file_name,
-                    error=str(e))
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="An error occurred while updating document summary"
+            detail=f"Failed to update summary: {str(e)}",
+        )
+
+    except Exception as e:
+        logger.error(
+            "Unexpected error during summary update",
+            org_id=org_id,
+            filename=file_name,
+            error=str(e),
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An error occurred while updating document summary",
         )

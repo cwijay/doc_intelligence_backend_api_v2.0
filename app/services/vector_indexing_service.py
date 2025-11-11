@@ -12,10 +12,8 @@ Features:
 - Organization-scoped indexing
 """
 
-import logging
-import json
 import hashlib
-from typing import Dict, List, Optional, Any, Tuple
+from typing import Dict, List, Optional, Any
 from datetime import datetime
 
 import openai
@@ -28,6 +26,7 @@ from app.core.logging import get_service_logger
 
 class VectorIndexingError(Exception):
     """Raised when vector indexing operations fail."""
+
     pass
 
 
@@ -47,7 +46,9 @@ class VectorIndexingService:
         self.logger = get_service_logger(__name__)
         self._pinecone_initialized = False
         self._bm25_indexes: Dict[str, BM25Okapi] = {}  # org_id -> BM25 index
-        self._document_corpus: Dict[str, List[List[str]]] = {}  # org_id -> tokenized documents
+        self._document_corpus: Dict[str, List[List[str]]] = (
+            {}
+        )  # org_id -> tokenized documents
 
         # Initialize Pinecone if credentials are available
         self._initialize_pinecone()
@@ -57,13 +58,17 @@ class VectorIndexingService:
             self.openai_client = openai.AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
         else:
             self.openai_client = None
-            self.logger.warning("OpenAI API key not provided - embeddings will not work")
+            self.logger.warning(
+                "OpenAI API key not provided - embeddings will not work"
+            )
 
     def _initialize_pinecone(self):
         """Initialize Pinecone connection."""
         try:
             if not settings.PINECONE_API_KEY:
-                self.logger.warning("Pinecone API key not provided - vector indexing disabled")
+                self.logger.warning(
+                    "Pinecone API key not provided - vector indexing disabled"
+                )
                 return
 
             # Initialize Pinecone client (new API)
@@ -80,9 +85,8 @@ class VectorIndexingService:
                     dimension=1536,  # OpenAI text-embedding-ada-002 dimension
                     metric="cosine",
                     spec=ServerlessSpec(
-                        cloud='aws',
-                        region='us-east-1'  # Default region
-                    )
+                        cloud="aws", region="us-east-1"  # Default region
+                    ),
                 )
 
             self.index = self.pinecone_client.Index(index_name)
@@ -114,8 +118,7 @@ class VectorIndexingService:
                 text = text[:8000]
 
             response = await self.openai_client.embeddings.create(
-                model="text-embedding-ada-002",
-                input=text
+                model="text-embedding-ada-002", input=text
             )
 
             embedding = response.data[0].embedding
@@ -138,10 +141,13 @@ class VectorIndexingService:
         """
         # Simple word tokenization and lowercasing
         import re
-        tokens = re.findall(r'\b\w+\b', text.lower())
+
+        tokens = re.findall(r"\b\w+\b", text.lower())
         return tokens
 
-    def _create_document_id(self, org_id: str, document_id: str, storage_path: str) -> str:
+    def _create_document_id(
+        self, org_id: str, document_id: str, storage_path: str
+    ) -> str:
         """
         Create a unique document ID for indexing.
 
@@ -163,7 +169,7 @@ class VectorIndexingService:
         document_id: str,
         storage_path: str,
         content: str,
-        metadata: Optional[Dict[str, Any]] = None
+        metadata: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """
         Index a document in both Pinecone (vector) and BM25 (keyword) indexes.
@@ -184,7 +190,7 @@ class VectorIndexingService:
                 org_id=org_id,
                 document_id=document_id,
                 storage_path=storage_path,
-                content_length=len(content)
+                content_length=len(content),
             )
 
             # Create unique document ID
@@ -197,7 +203,7 @@ class VectorIndexingService:
                 "storage_path": storage_path,
                 "indexed_at": datetime.utcnow().isoformat(),
                 "content_length": len(content),
-                **(metadata or {})
+                **(metadata or {}),
             }
 
             results = {
@@ -205,7 +211,7 @@ class VectorIndexingService:
                 "pinecone_indexed": False,
                 "bm25_indexed": False,
                 "embedding_dimension": None,
-                "metadata": index_metadata
+                "metadata": index_metadata,
             }
 
             # Index in Pinecone (vector search)
@@ -216,22 +222,30 @@ class VectorIndexingService:
 
                     if embedding:
                         # Upsert to Pinecone
-                        self.index.upsert([{
-                            "id": doc_id,
-                            "values": embedding,
-                            "metadata": index_metadata
-                        }])
+                        self.index.upsert(
+                            [
+                                {
+                                    "id": doc_id,
+                                    "values": embedding,
+                                    "metadata": index_metadata,
+                                }
+                            ]
+                        )
 
                         results["pinecone_indexed"] = True
                         results["embedding_dimension"] = len(embedding)
                         self.logger.info(f"Document indexed in Pinecone: {doc_id}")
                     else:
-                        self.logger.warning(f"Failed to generate embedding for {doc_id}")
+                        self.logger.warning(
+                            f"Failed to generate embedding for {doc_id}"
+                        )
 
                 except Exception as e:
                     self.logger.error(f"Pinecone indexing failed for {doc_id}: {e}")
             else:
-                self.logger.warning("Pinecone not initialized - skipping vector indexing")
+                self.logger.warning(
+                    "Pinecone not initialized - skipping vector indexing"
+                )
 
             # Index in BM25 (keyword search)
             try:
@@ -260,7 +274,7 @@ class VectorIndexingService:
                 "Document indexing completed",
                 org_id=org_id,
                 document_id=document_id,
-                results=results
+                results=results,
             )
 
             return results
@@ -270,11 +284,7 @@ class VectorIndexingService:
             raise VectorIndexingError(f"Failed to index document: {e}")
 
     async def search_similar_documents(
-        self,
-        org_id: str,
-        query: str,
-        top_k: int = 10,
-        include_metadata: bool = True
+        self, org_id: str, query: str, top_k: int = 10, include_metadata: bool = True
     ) -> List[Dict[str, Any]]:
         """
         Search for similar documents using vector similarity.
@@ -304,7 +314,7 @@ class VectorIndexingService:
                 vector=query_embedding,
                 top_k=top_k,
                 include_metadata=include_metadata,
-                filter={"org_id": org_id}
+                filter={"org_id": org_id},
             )
 
             # Format results
@@ -319,7 +329,9 @@ class VectorIndexingService:
 
                 formatted_results.append(result)
 
-            self.logger.info(f"Vector search completed: {len(formatted_results)} results")
+            self.logger.info(
+                f"Vector search completed: {len(formatted_results)} results"
+            )
             return formatted_results
 
         except Exception as e:
@@ -327,10 +339,7 @@ class VectorIndexingService:
             return []
 
     def search_keywords(
-        self,
-        org_id: str,
-        query: str,
-        top_k: int = 10
+        self, org_id: str, query: str, top_k: int = 10
     ) -> List[Dict[str, Any]]:
         """
         Search for documents using BM25 keyword matching.
@@ -356,19 +365,19 @@ class VectorIndexingService:
 
             # Get top results
             top_indices = sorted(
-                range(len(bm25_scores)),
-                key=lambda i: bm25_scores[i],
-                reverse=True
+                range(len(bm25_scores)), key=lambda i: bm25_scores[i], reverse=True
             )[:top_k]
 
             results = []
             for idx in top_indices:
                 if bm25_scores[idx] > 0:  # Only include non-zero scores
-                    results.append({
-                        "document_index": idx,
-                        "bm25_score": bm25_scores[idx],
-                        "org_id": org_id
-                    })
+                    results.append(
+                        {
+                            "document_index": idx,
+                            "bm25_score": bm25_scores[idx],
+                            "org_id": org_id,
+                        }
+                    )
 
             self.logger.info(f"BM25 search completed: {len(results)} results")
             return results
@@ -378,10 +387,7 @@ class VectorIndexingService:
             return []
 
     async def delete_document(
-        self,
-        org_id: str,
-        document_id: str,
-        storage_path: str
+        self, org_id: str, document_id: str, storage_path: str
     ) -> Dict[str, Any]:
         """
         Remove a document from both indexes.
@@ -400,7 +406,7 @@ class VectorIndexingService:
             results = {
                 "document_id": doc_id,
                 "pinecone_deleted": False,
-                "bm25_deleted": False
+                "bm25_deleted": False,
             }
 
             # Delete from Pinecone
@@ -437,7 +443,7 @@ class VectorIndexingService:
             "indexed_organizations": list(self._bm25_indexes.keys()),
             "total_bm25_documents": sum(
                 len(corpus) for corpus in self._document_corpus.values()
-            )
+            ),
         }
 
         if self._pinecone_initialized:
@@ -446,7 +452,7 @@ class VectorIndexingService:
                 stats = self.index.describe_index_stats()
                 status["pinecone_stats"] = {
                     "total_vector_count": stats.total_vector_count,
-                    "dimension": stats.dimension
+                    "dimension": stats.dimension,
                 }
             except Exception as e:
                 self.logger.error(f"Failed to get Pinecone stats: {e}")

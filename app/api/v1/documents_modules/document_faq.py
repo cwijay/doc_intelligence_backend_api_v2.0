@@ -3,7 +3,7 @@ Document FAQ Endpoints - LangChain-based Implementation.
 
 This module provides AI-powered document FAQ generation endpoints:
 - Generate FAQs with custom count and prompts
-- Retrieve existing FAQs  
+- Retrieve existing FAQs
 - Update/regenerate FAQs with custom parameters
 - LangChain integration for robust FAQ generation
 """
@@ -15,18 +15,14 @@ from app.models.schemas import (
     DocumentFAQRequest,
     DocumentFAQResponse,
     DocumentFAQUpdateRequest,
-    DocumentFAQRetrievalResponse
+    DocumentFAQRetrievalResponse,
 )
 from app.services.document.document_ai_service import (
     document_ai_service,
-    DocumentFAQError,
     FAQGenerationError,
-    ContentNotFoundError
+    ContentNotFoundError,
 )
-from app.services.document_service import (
-    DocumentNotFoundError,
-    DocumentValidationError
-)
+from app.services.document_service import DocumentNotFoundError, DocumentValidationError
 from app.core.simple_auth import get_current_user_dict
 from app.core.logging import get_api_logger
 
@@ -80,79 +76,90 @@ curl -X POST "http://localhost:8000/api/v1/documents/faq?file_name=Sample2.pdf" 
 - Includes generation metadata (model, timing, count, etc.)
 - LangChain-powered generation for higher quality results
     """,
-    status_code=status.HTTP_201_CREATED
+    status_code=status.HTTP_201_CREATED,
 )
 async def generate_document_faq(
-    file_name: str = Query(..., description="The filename of the document to generate FAQ for"),
+    file_name: str = Query(
+        ..., description="The filename of the document to generate FAQ for"
+    ),
     request: DocumentFAQRequest = DocumentFAQRequest(),
-    current_user: Dict[str, Any] = Depends(get_current_user_dict)
+    current_user: Dict[str, Any] = Depends(get_current_user_dict),
 ):
     """Generate AI-powered FAQ for a document using LangChain."""
     try:
         # Get user/org info from session
         org_id = current_user["org_id"]
-        
-        logger.info("Starting document FAQ generation", 
-                   org_id=org_id,
-                   filename=file_name,
-                   faq_count=request.faq_count,
-                   has_custom_prompt=bool(request.prompt))
-        
+
+        logger.info(
+            "Starting document FAQ generation",
+            org_id=org_id,
+            filename=file_name,
+            faq_count=request.faq_count,
+            has_custom_prompt=bool(request.prompt),
+        )
+
         # Generate FAQ using AI service
         result = await document_ai_service.generate_faq_by_filename(
             org_id=org_id,
             filename=file_name,
             faq_count=request.faq_count,
-            custom_prompt=request.prompt
+            custom_prompt=request.prompt,
         )
-        
+
         response = DocumentFAQResponse(**result)
-        
-        logger.info("Document FAQ generation completed successfully", 
-                   org_id=org_id,
-                   filename=file_name,
-                   faq_count=len(result.get("ai_faq", [])))
-        
+
+        logger.info(
+            "Document FAQ generation completed successfully",
+            org_id=org_id,
+            filename=file_name,
+            faq_count=len(result.get("ai_faq", [])),
+        )
+
         return response
-        
+
     except DocumentNotFoundError as e:
-        logger.warning("Document not found for FAQ generation", 
-                      org_id=org_id,
-                      filename=file_name,
-                      error=str(e))
+        logger.warning(
+            "Document not found for FAQ generation",
+            org_id=org_id,
+            filename=file_name,
+            error=str(e),
+        )
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Document with filename '{file_name}' not found"
+            detail=f"Document with filename '{file_name}' not found",
         )
-        
+
     except ContentNotFoundError as e:
-        logger.warning("Document has no content for FAQ generation", 
-                      org_id=org_id,
-                      filename=file_name,
-                      error=str(e))
+        logger.warning(
+            "Document has no content for FAQ generation",
+            org_id=org_id,
+            filename=file_name,
+            error=str(e),
+        )
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Document '{file_name}' has no parsed content. Please parse the document first."
+            detail=f"Document '{file_name}' has no parsed content. Please parse the document first.",
         )
-        
+
     except FAQGenerationError as e:
-        logger.error("FAQ generation failed", 
-                    org_id=org_id,
-                    filename=file_name,
-                    error=str(e))
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to generate FAQ: {str(e)}"
+        logger.error(
+            "FAQ generation failed", org_id=org_id, filename=file_name, error=str(e)
         )
-        
-    except Exception as e:
-        logger.error("Unexpected error during FAQ generation", 
-                    org_id=org_id,
-                    filename=file_name,
-                    error=str(e))
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="An error occurred while generating document FAQ"
+            detail=f"Failed to generate FAQ: {str(e)}",
+        )
+
+    except Exception as e:
+        logger.error(
+            "Unexpected error during FAQ generation",
+            org_id=org_id,
+            filename=file_name,
+            error=str(e),
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An error occurred while generating document FAQ",
         )
 
 
@@ -180,54 +187,59 @@ curl -X GET "http://localhost:8000/api/v1/documents/faq?file_name=Sample2.pdf" \
 - FAQ count and availability status
 - Whether document has FAQ available
     """,
-    status_code=status.HTTP_200_OK
+    status_code=status.HTTP_200_OK,
 )
 async def get_document_faq(
-    file_name: str = Query(..., description="The filename of the document to retrieve FAQ for"),
-    current_user: Dict[str, Any] = Depends(get_current_user_dict)
+    file_name: str = Query(
+        ..., description="The filename of the document to retrieve FAQ for"
+    ),
+    current_user: Dict[str, Any] = Depends(get_current_user_dict),
 ):
     """Get existing AI FAQ for a document."""
     try:
         # Get user/org info from session
         org_id = current_user["org_id"]
-        
-        logger.debug("Retrieving document FAQ", 
-                    org_id=org_id,
-                    filename=file_name)
-        
+
+        logger.debug("Retrieving document FAQ", org_id=org_id, filename=file_name)
+
         # Get FAQ using AI service
         result = await document_ai_service.get_faq_by_filename(
-            org_id=org_id,
-            filename=file_name
+            org_id=org_id, filename=file_name
         )
-        
+
         response = DocumentFAQRetrievalResponse(**result)
-        
-        logger.debug("Document FAQ retrieved successfully", 
-                    org_id=org_id,
-                    filename=file_name,
-                    has_faq=result.get("has_faq", False))
-        
+
+        logger.debug(
+            "Document FAQ retrieved successfully",
+            org_id=org_id,
+            filename=file_name,
+            has_faq=result.get("has_faq", False),
+        )
+
         return response
-        
+
     except DocumentNotFoundError as e:
-        logger.warning("Document not found for FAQ retrieval", 
-                      org_id=org_id,
-                      filename=file_name,
-                      error=str(e))
+        logger.warning(
+            "Document not found for FAQ retrieval",
+            org_id=org_id,
+            filename=file_name,
+            error=str(e),
+        )
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Document with filename '{file_name}' not found"
+            detail=f"Document with filename '{file_name}' not found",
         )
-        
+
     except Exception as e:
-        logger.error("Error retrieving document FAQ", 
-                    org_id=org_id,
-                    filename=file_name,
-                    error=str(e))
+        logger.error(
+            "Error retrieving document FAQ",
+            org_id=org_id,
+            filename=file_name,
+            error=str(e),
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="An error occurred while retrieving document FAQ"
+            detail="An error occurred while retrieving document FAQ",
         )
 
 
@@ -272,101 +284,113 @@ curl -X PUT "http://localhost:8000/api/v1/documents/faq?file_name=Sample2.pdf" \
 
 **Note:** You must provide either `faq` OR (`prompt` with optional `faq_count`), not both.
     """,
-    status_code=status.HTTP_200_OK
+    status_code=status.HTTP_200_OK,
 )
 async def update_document_faq(
     request: DocumentFAQUpdateRequest,
-    file_name: str = Query(..., description="The filename of the document to update FAQ for"),
-    current_user: Dict[str, Any] = Depends(get_current_user_dict)
+    file_name: str = Query(
+        ..., description="The filename of the document to update FAQ for"
+    ),
+    current_user: Dict[str, Any] = Depends(get_current_user_dict),
 ):
     """Update or regenerate AI FAQ for a document."""
     try:
         # Get user/org info from session
         org_id = current_user["org_id"]
-        
+
         # Validate that either FAQ or prompt is provided
         if not request.faq and not request.prompt:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="Either 'faq' or 'prompt' must be provided"
+                detail="Either 'faq' or 'prompt' must be provided",
             )
-        
+
         if request.faq and request.prompt:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="Provide either 'faq' OR 'prompt', not both"
+                detail="Provide either 'faq' OR 'prompt', not both",
             )
-        
-        logger.info("Updating document FAQ", 
-                   org_id=org_id,
-                   filename=file_name,
-                   update_type="direct" if request.faq else "regenerate")
-        
+
+        logger.info(
+            "Updating document FAQ",
+            org_id=org_id,
+            filename=file_name,
+            update_type="direct" if request.faq else "regenerate",
+        )
+
         # Update FAQ using AI service
         result = await document_ai_service.update_faq_by_filename(
             org_id=org_id,
             filename=file_name,
             faq=request.faq,
             custom_prompt=request.prompt,
-            faq_count=request.faq_count
+            faq_count=request.faq_count,
         )
-        
+
         response = DocumentFAQResponse(**result)
-        
-        logger.info("Document FAQ updated successfully", 
-                   org_id=org_id,
-                   filename=file_name,
-                   update_type=result.get("update_type"),
-                   faq_count=len(result.get("ai_faq", [])))
-        
+
+        logger.info(
+            "Document FAQ updated successfully",
+            org_id=org_id,
+            filename=file_name,
+            update_type=result.get("update_type"),
+            faq_count=len(result.get("ai_faq", [])),
+        )
+
         return response
-        
+
     except DocumentNotFoundError as e:
-        logger.warning("Document not found for FAQ update", 
-                      org_id=org_id,
-                      filename=file_name,
-                      error=str(e))
+        logger.warning(
+            "Document not found for FAQ update",
+            org_id=org_id,
+            filename=file_name,
+            error=str(e),
+        )
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Document with filename '{file_name}' not found"
+            detail=f"Document with filename '{file_name}' not found",
         )
-        
+
     except DocumentValidationError as e:
-        logger.warning("Invalid request for FAQ update", 
-                      org_id=org_id,
-                      filename=file_name,
-                      error=str(e))
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=str(e)
+        logger.warning(
+            "Invalid request for FAQ update",
+            org_id=org_id,
+            filename=file_name,
+            error=str(e),
         )
-        
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e)
+        )
+
     except ContentNotFoundError as e:
-        logger.warning("Document has no content for FAQ regeneration", 
-                      org_id=org_id,
-                      filename=file_name,
-                      error=str(e))
+        logger.warning(
+            "Document has no content for FAQ regeneration",
+            org_id=org_id,
+            filename=file_name,
+            error=str(e),
+        )
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Document '{file_name}' has no parsed content. Cannot regenerate FAQ."
+            detail=f"Document '{file_name}' has no parsed content. Cannot regenerate FAQ.",
         )
-        
+
     except FAQGenerationError as e:
-        logger.error("FAQ update failed", 
-                    org_id=org_id,
-                    filename=file_name,
-                    error=str(e))
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to update FAQ: {str(e)}"
+        logger.error(
+            "FAQ update failed", org_id=org_id, filename=file_name, error=str(e)
         )
-        
-    except Exception as e:
-        logger.error("Unexpected error during FAQ update", 
-                    org_id=org_id,
-                    filename=file_name,
-                    error=str(e))
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="An error occurred while updating document FAQ"
+            detail=f"Failed to update FAQ: {str(e)}",
+        )
+
+    except Exception as e:
+        logger.error(
+            "Unexpected error during FAQ update",
+            org_id=org_id,
+            filename=file_name,
+            error=str(e),
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An error occurred while updating document FAQ",
         )

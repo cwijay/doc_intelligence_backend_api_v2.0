@@ -8,23 +8,27 @@ This module handles document processing operations, focusing on:
 - AI-powered document summarization
 """
 
-from typing import Dict, Any
+from typing import Dict
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.models.schemas import (
-    DocumentParseRequest, DocumentParseResponse,
-    ExistingDocumentParseResponse, SaveParsedDocumentRequest, SaveParsedDocumentResponse
+    DocumentParseRequest,
+    DocumentParseResponse,
+    ExistingDocumentParseResponse,
+    SaveParsedDocumentRequest,
+    SaveParsedDocumentResponse,
 )
 from app.services.document_service import DocumentNotFoundError
 from app.services.document.document_parsing_service import (
     document_parsing_service,
     UnsupportedFileTypeError,
-    DocumentParsingError
+    DocumentParsingError,
 )
 from app.services.vector_indexing_service import (
     vector_indexing_service,
-    VectorIndexingError
+    VectorIndexingError,
 )
+
 # Summarization now handled in documents.py - imports removed
 from .common import (
     get_document_dependencies,
@@ -34,7 +38,7 @@ from .common import (
     log_operation_start,
     log_operation_success,
     log_operation_error,
-    logger
+    logger,
 )
 
 router = APIRouter()
@@ -106,12 +110,12 @@ curl -X POST "http://localhost:8000/api/v1/documents/parse" \\
                             "has_headers": True,
                             "has_footers": True,
                             "content_length": 2450,
-                            "pages_with_content": 2
+                            "pages_with_content": 2,
                         },
-                        "timestamp": "2025-08-20T14:30:00Z"
+                        "timestamp": "2025-08-20T14:30:00Z",
                     }
                 }
-            }
+            },
         },
         400: {
             "description": "Validation error or unsupported file type",
@@ -120,49 +124,49 @@ curl -X POST "http://localhost:8000/api/v1/documents/parse" \\
                     "examples": {
                         "invalid_storage_path": {
                             "summary": "Invalid storage path format",
-                            "value": {"detail": "Storage path must have at least 3 parts: org/type/folder or org/type/file"}
+                            "value": {
+                                "detail": "Storage path must have at least 3 parts: org/type/folder or org/type/file"
+                            },
                         },
                         "unsupported_file_type": {
                             "summary": "Unsupported file type",
-                            "value": {"detail": "File type '.txt' is not supported for parsing"}
-                        }
+                            "value": {
+                                "detail": "File type '.txt' is not supported for parsing"
+                            },
+                        },
                     }
                 }
-            }
+            },
         },
         401: {"description": "Authentication required"},
         404: {"description": "Document not found"},
-        500: {"description": "Parsing failed"}
-    }
+        500: {"description": "Parsing failed"},
+    },
 )
 async def parse_document(
     parse_request: DocumentParseRequest,
     user_context: Dict[str, str] = Depends(get_user_context),
-    deps = Depends(get_document_dependencies)
+    deps=Depends(get_document_dependencies),
 ):
     """
     Parse a document from GCS storage and convert to markdown format.
-    
+
     This endpoint provides comprehensive document parsing capabilities using
     LlamaParse for advanced AI-powered content extraction.
     """
     org_id = user_context["org_id"]
     user_id = user_context["user_id"]
-    
+
     try:
         log_operation_start(
-            "Document parsing",
-            storage_path=parse_request.storage_path,
-            **user_context
+            "Document parsing", storage_path=parse_request.storage_path, **user_context
         )
-        
+
         # Call parsing service
         result = await document_parsing_service.parse_document_from_gcs(
-            org_id=org_id,
-            storage_path=parse_request.storage_path,
-            user_id=user_id
+            org_id=org_id, storage_path=parse_request.storage_path, user_id=user_id
         )
-        
+
         # Create response model
         response = DocumentParseResponse(
             success=result["success"],
@@ -171,31 +175,28 @@ async def parse_document(
             parsed_content=result["parsed_content"],
             parsing_metadata=result["parsing_metadata"],
             gcs_metadata=result["gcs_metadata"],
-            file_info=result["file_info"]
+            file_info=result["file_info"],
         )
-        
+
         log_operation_success(
             "Document parsing",
             storage_path=parse_request.storage_path,
             parsed_content_length=len(result["parsed_content"]),
-            **user_context
+            **user_context,
         )
-        
+
         return response
-        
+
     except UnsupportedFileTypeError as e:
         log_operation_error("Document parsing", str(e), **user_context)
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e)
-        )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except DocumentNotFoundError as e:
         raise handle_document_not_found_error(e, "parsing", **user_context)
     except DocumentParsingError as e:
         log_operation_error("Document parsing", str(e), **user_context)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to parse document: {str(e)}"
+            detail=f"Failed to parse document: {str(e)}",
         )
     except Exception as e:
         raise handle_generic_error(e, "document parsing", **user_context)
@@ -241,9 +242,9 @@ GET /api/v1/documents/parse/Google/original/invoices/invoice-2025-001.pdf
                                 "parsed_metadata": {
                                     "size": 2450,
                                     "content_type": "text/markdown",
-                                    "created": "2025-08-20T14:30:15Z"
-                                }
-                            }
+                                    "created": "2025-08-20T14:30:15Z",
+                                },
+                            },
                         },
                         "not_exists": {
                             "summary": "Parsed document does not exist",
@@ -251,48 +252,50 @@ GET /api/v1/documents/parse/Google/original/invoices/invoice-2025-001.pdf
                                 "exists": False,
                                 "storage_path": "Google/original/invoices/invoice-2025-002.pdf",
                                 "parsed_storage_path": "Google/parsed/invoices/invoice-2025-002.md",
-                                "message": "Parsed version does not exist"
-                            }
-                        }
+                                "message": "Parsed version does not exist",
+                            },
+                        },
                     }
                 }
-            }
+            },
         },
         401: {"description": "Authentication required"},
-        500: {"description": "Server error"}
-    }
+        500: {"description": "Server error"},
+    },
 )
 async def get_parsed_document(
-    storage_path: str,
-    user_context: Dict[str, str] = Depends(get_user_context)
+    storage_path: str, user_context: Dict[str, str] = Depends(get_user_context)
 ):
     """
     Get existing parsed document content if available.
-    
+
     This endpoint allows clients to check if a document has already been
     parsed and retrieve the existing content without re-processing.
     """
     org_id = user_context["org_id"]
-    
+
     try:
-        logger.debug("Checking for existing parsed document", 
-                    org_id=org_id,
-                    storage_path=storage_path)
-        
-        result = await document_parsing_service.get_parsed_document(
+        logger.debug(
+            "Checking for existing parsed document",
             org_id=org_id,
-            storage_path=storage_path
+            storage_path=storage_path,
         )
-        
+
+        result = await document_parsing_service.get_parsed_document(
+            org_id=org_id, storage_path=storage_path
+        )
+
         response = ExistingDocumentParseResponse(**result)
-        
-        logger.debug("Parsed document check completed", 
-                    org_id=org_id,
-                    storage_path=storage_path,
-                    exists=result["exists"])
-        
+
+        logger.debug(
+            "Parsed document check completed",
+            org_id=org_id,
+            storage_path=storage_path,
+            exists=result["exists"],
+        )
+
         return response
-        
+
     except Exception as e:
         raise handle_generic_error(e, "checking parsed document", **user_context)
 
@@ -411,21 +414,18 @@ console.log('Indexed for search:', result.indexing.pinecone_indexed);
                         "file_size": 1250,
                         "overwritten": False,
                         "timestamp": "2025-08-20T14:30:00Z",
-                        "metadata": {
-                            "category": "compliance",
-                            "parser": "manual"
-                        },
+                        "metadata": {"category": "compliance", "parser": "manual"},
                         "indexing": {
                             "enabled": True,
                             "pinecone_indexed": True,
                             "bm25_indexed": True,
                             "embedding_dimension": 1536,
                             "token_count": 234,
-                            "indexed_at": "2025-08-20T14:30:00Z"
-                        }
+                            "indexed_at": "2025-08-20T14:30:00Z",
+                        },
                     }
                 }
-            }
+            },
         },
         400: {
             "description": "Invalid request or path validation error",
@@ -433,15 +433,17 @@ console.log('Indexed for search:', result.indexing.pinecone_indexed);
                 "application/json": {
                     "example": {"detail": "Invalid target path format"}
                 }
-            }
+            },
         },
         403: {
             "description": "Organization access denied",
             "content": {
                 "application/json": {
-                    "example": {"detail": "User does not belong to specified organization"}
+                    "example": {
+                        "detail": "User does not belong to specified organization"
+                    }
                 }
-            }
+            },
         },
         500: {
             "description": "Storage error",
@@ -449,13 +451,13 @@ console.log('Indexed for search:', result.indexing.pinecone_indexed);
                 "application/json": {
                     "example": {"detail": "Failed to save parsed content to GCS"}
                 }
-            }
-        }
-    }
+            },
+        },
+    },
 )
 async def save_parsed_document(
     request: SaveParsedDocumentRequest,
-    user_context: Dict[str, str] = Depends(get_user_context)
+    user_context: Dict[str, str] = Depends(get_user_context),
 ) -> SaveParsedDocumentResponse:
     """
     Save parsed document content directly to GCS with vector indexing.
@@ -475,15 +477,17 @@ async def save_parsed_document(
             target_path=request.target_path,
             original_filename=request.original_filename,
             content_size=len(request.content),
-            **user_context
+            **user_context,
         )
 
         # Step 1: Clean target path and parse organization
-        cleaned_target_path = document_parsing_service._clean_storage_path(request.target_path)
+        cleaned_target_path = document_parsing_service._clean_storage_path(
+            request.target_path
+        )
 
-        path_parts = cleaned_target_path.split('/')
+        path_parts = cleaned_target_path.split("/")
         org_name = path_parts[0]
-        folder_path = '/'.join(path_parts[2:])  # Skip 'parsed' part
+        folder_path = "/".join(path_parts[2:])  # Skip 'parsed' part
 
         # Step 2: Validate user belongs to organization
         # This should be validated by the service layer
@@ -494,7 +498,7 @@ async def save_parsed_document(
             content=request.content,
             original_filename=request.original_filename,
             metadata=request.metadata or {},
-            org_id=user_context["org_id"]
+            org_id=user_context["org_id"],
         )
 
         # Step 4: Index the document content for search
@@ -502,8 +506,11 @@ async def save_parsed_document(
         try:
             # Generate a document ID for indexing (use filename without extension)
             import os
+
             base_filename = os.path.splitext(request.original_filename)[0]
-            document_id = f"{org_name}_{folder_path}_{base_filename}".replace("/", "_").replace(" ", "_")
+            document_id = f"{org_name}_{folder_path}_{base_filename}".replace(
+                "/", "_"
+            ).replace(" ", "_")
 
             # Create indexing metadata
             indexing_metadata = {
@@ -513,7 +520,7 @@ async def save_parsed_document(
                 "gcs_path": result["gcs_path"],
                 "created_by": user_context["user_id"],
                 "content_type": "parsed_markdown",
-                **(request.metadata or {})
+                **(request.metadata or {}),
             }
 
             # Index in both Pinecone and BM25
@@ -522,7 +529,7 @@ async def save_parsed_document(
                 document_id=document_id,
                 storage_path=result["storage_path"],
                 content=request.content,
-                metadata=indexing_metadata
+                metadata=indexing_metadata,
             )
 
             logger.info(
@@ -530,7 +537,7 @@ async def save_parsed_document(
                 document_id=document_id,
                 pinecone_indexed=indexing_results.get("pinecone_indexed", False),
                 bm25_indexed=indexing_results.get("bm25_indexed", False),
-                **user_context
+                **user_context,
             )
 
         except VectorIndexingError as e:
@@ -539,13 +546,13 @@ async def save_parsed_document(
                 "Document indexing failed but GCS save succeeded",
                 error=str(e),
                 gcs_path=result["gcs_path"],
-                **user_context
+                **user_context,
             )
             indexing_results = {
                 "indexed": False,
                 "error": str(e),
                 "pinecone_indexed": False,
-                "bm25_indexed": False
+                "bm25_indexed": False,
             }
         except Exception as e:
             # Log unexpected indexing error
@@ -553,13 +560,13 @@ async def save_parsed_document(
                 "Unexpected error during document indexing",
                 error=str(e),
                 error_type=type(e).__name__,
-                **user_context
+                **user_context,
             )
             indexing_results = {
                 "indexed": False,
                 "error": f"Unexpected error: {str(e)}",
                 "pinecone_indexed": False,
-                "bm25_indexed": False
+                "bm25_indexed": False,
             }
 
         # Step 5: Prepare enhanced response
@@ -571,8 +578,8 @@ async def save_parsed_document(
                 "bm25_indexed": indexing_results.get("bm25_indexed", False),
                 "embedding_dimension": indexing_results.get("embedding_dimension"),
                 "token_count": indexing_results.get("token_count"),
-                "indexed_at": indexing_results.get("metadata", {}).get("indexed_at")
-            }
+                "indexed_at": indexing_results.get("metadata", {}).get("indexed_at"),
+            },
         }
 
         # Add indexing error info if present
@@ -586,13 +593,15 @@ async def save_parsed_document(
             overwritten=result["overwritten"],
             pinecone_indexed=enhanced_result["indexing"]["pinecone_indexed"],
             bm25_indexed=enhanced_result["indexing"]["bm25_indexed"],
-            **user_context
+            **user_context,
         )
 
         return SaveParsedDocumentResponse(**enhanced_result)
 
     except Exception as e:
-        raise handle_generic_error(e, "saving parsed content with indexing", **user_context)
+        raise handle_generic_error(
+            e, "saving parsed content with indexing", **user_context
+        )
 
 
 # Summarization endpoint removed - now handled by the simplified DocumentAIService
