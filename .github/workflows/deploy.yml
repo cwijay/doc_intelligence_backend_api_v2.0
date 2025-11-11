@@ -107,12 +107,13 @@ jobs:
           echo "Building image: ${IMAGE_URL}"
 
           # Build image using Cloud Build for consistency with existing setup
+          # Using regional user-owned bucket for logs (2025 best practice)
           gcloud builds submit \
             --tag="${IMAGE_URL}" \
             --timeout=20m \
             --machine-type=e2-highcpu-8 \
             --project="${PROJECT_ID}" \
-            --suppress-logs
+            --default-buckets-behavior=REGIONAL_USER_OWNED_BUCKET
 
           # Also tag as latest for the environment
           gcloud container images add-tag "${IMAGE_URL}" "${IMAGE_NAME}:${ENVIRONMENT}-latest" --quiet
