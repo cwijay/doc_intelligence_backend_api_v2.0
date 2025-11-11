@@ -107,7 +107,6 @@ jobs:
           echo "Building image: ${IMAGE_URL}"
 
           # Build image using Cloud Build for consistency with existing setup
-          cd document-intelligence-backend
           gcloud builds submit \
             --tag="${IMAGE_URL}" \
             --timeout=20m \
@@ -144,7 +143,6 @@ jobs:
 
       - name: Create environment variables file
         run: |
-          cd document-intelligence-backend
           cat > .env.staging << EOF
           ENVIRONMENT=staging
           FIREBASE_PROJECT_ID=${{ secrets.FIREBASE_PROJECT_ID }}
@@ -180,8 +178,6 @@ jobs:
           PROJECT_ID="${{ secrets.GCP_PROJECT_ID }}"
           SERVICE_NAME="${{ needs.determine-environment.outputs.service_name }}"
           IMAGE_URL="${{ needs.build-image.outputs.image_url }}"
-
-          cd document-intelligence-backend
 
           gcloud run deploy ${SERVICE_NAME} \
             --image="${IMAGE_URL}" \
@@ -274,7 +270,6 @@ jobs:
 
       - name: Create environment variables file
         run: |
-          cd document-intelligence-backend
           cat > .env.production << EOF
           ENVIRONMENT=production
           FIREBASE_PROJECT_ID=${{ secrets.FIREBASE_PROJECT_ID }}
@@ -310,8 +305,6 @@ jobs:
           PROJECT_ID="${{ secrets.GCP_PROJECT_ID }}"
           SERVICE_NAME="${{ needs.determine-environment.outputs.service_name }}"
           IMAGE_URL="${{ needs.build-image.outputs.image_url }}"
-
-          cd document-intelligence-backend
 
           gcloud run deploy ${SERVICE_NAME} \
             --image="${IMAGE_URL}" \

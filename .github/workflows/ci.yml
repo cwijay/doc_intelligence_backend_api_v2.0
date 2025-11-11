@@ -35,24 +35,20 @@ jobs:
 
       - name: Install dependencies
         run: |
-          cd document-intelligence-backend
           uv sync
 
       - name: Check code formatting with Black
         run: |
-          cd document-intelligence-backend
           uv run black --check app/ tests/
         continue-on-error: false
 
       - name: Lint with Ruff
         run: |
-          cd document-intelligence-backend
           uv run ruff check app/ tests/
         continue-on-error: false
 
       - name: Type check with MyPy
         run: |
-          cd document-intelligence-backend
           uv run mypy app/
         continue-on-error: true  # Type checking can be strict, make it non-blocking initially
 
@@ -79,12 +75,10 @@ jobs:
 
       - name: Install dependencies
         run: |
-          cd document-intelligence-backend
           uv sync
 
       - name: Run tests with pytest
         run: |
-          cd document-intelligence-backend
           # Skip tests for now as they require a running server (integration tests)
           echo "⚠️  Skipping tests - integration tests require running server"
           echo "Tests will be enabled after converting to unit tests"
@@ -101,7 +95,6 @@ jobs:
       - name: Generate coverage report
         if: always()
         run: |
-          cd document-intelligence-backend
           # Skip coverage for now
           echo "⚠️  Skipping coverage - integration tests require running server"
         continue-on-error: true
@@ -139,12 +132,10 @@ jobs:
 
       - name: Install dependencies
         run: |
-          cd document-intelligence-backend
           uv sync
 
       - name: Run security scan with pip-audit (via UV)
         run: |
-          cd document-intelligence-backend
           # Export requirements for security scanning
           uv pip freeze > requirements-freeze.txt
           uv tool run pip-audit -r requirements-freeze.txt
@@ -173,8 +164,8 @@ jobs:
       - name: Build Docker image (no push)
         uses: docker/build-push-action@v5
         with:
-          context: ./document-intelligence-backend
-          file: ./document-intelligence-backend/Dockerfile
+          context: .
+          file: ./Dockerfile
           push: false
           tags: document-intelligence-api:ci-test
           cache-from: type=gha
