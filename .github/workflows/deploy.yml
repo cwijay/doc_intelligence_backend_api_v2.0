@@ -226,6 +226,7 @@ jobs:
 
       - name: Post deployment summary
         if: always()
+        continue-on-error: true  # Don't fail if comment posting has permission issues
         uses: actions/github-script@v7
         with:
           script: |
@@ -405,6 +406,7 @@ jobs:
 
       - name: Post deployment summary
         if: always()
+        continue-on-error: true  # Don't fail if comment posting has permission issues
         uses: actions/github-script@v7
         with:
           script: |
