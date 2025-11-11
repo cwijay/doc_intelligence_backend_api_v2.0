@@ -145,9 +145,11 @@ jobs:
         uses: trufflesecurity/trufflehog@main
         with:
           path: ./
-          base: ${{ github.event.repository.default_branch }}
-          head: HEAD
+          base: ${{ github.event.before }}
+          head: ${{ github.sha }}
+          extra_args: --only-verified
         continue-on-error: true
+        if: github.event.before != '0000000000000000000000000000000000000000'
 
   build-validation:
     name: Validate Docker Build
