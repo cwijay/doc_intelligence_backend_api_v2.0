@@ -146,32 +146,32 @@ jobs:
       - name: Create environment variables file
         run: |
           cat > .env.staging << EOF
-          ENVIRONMENT=staging
-          FIREBASE_PROJECT_ID=${{ secrets.FIREBASE_PROJECT_ID }}
-          FIREBASE_DATABASE_ID=${{ secrets.STAGING_FIREBASE_DATABASE_ID || secrets.FIREBASE_DATABASE_ID }}
-          GCP_PROJECT_ID=${{ secrets.GCP_PROJECT_ID }}
-          GCS_BUCKET_NAME=${{ secrets.STAGING_GCS_BUCKET_NAME || secrets.GCS_BUCKET_NAME }}
-          JWT_SECRET_KEY=${{ secrets.JWT_SECRET_KEY }}
-          JWT_ALGORITHM=HS256
-          ACCESS_TOKEN_EXPIRE_MINUTES=30
-          SESSION_DURATION_HOURS=2
-          REFRESH_SESSION_DURATION_DAYS=7
-          OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
-          OPENAI_MODEL=${{ secrets.OPENAI_MODEL || 'gpt-5-mini' }}
-          OPENAI_MAX_TOKENS=4000
-          OPENAI_TEMPERATURE=0.0
-          LLAMAPARSE_API_KEY=${{ secrets.LLAMAPARSE_API_KEY }}
-          PINECONE_API_KEY=${{ secrets.PINECONE_API_KEY }}
-          PINECONE_ENVIRONMENT=${{ secrets.PINECONE_ENVIRONMENT }}
-          PINECONE_INDEX_NAME=${{ secrets.PINECONE_INDEX_NAME || 'document-intelligence' }}
-          PRODUCTION_CORS_ORIGINS=${{ secrets.STAGING_CORS_ORIGINS || '["http://localhost:3000"]' }}
-          FRONTEND_DOMAIN=${{ secrets.FRONTEND_DOMAIN || 'localhost' }}
-          MAX_FILE_SIZE=52428800
-          ALLOWED_FILE_TYPES='["pdf", "xlsx"]'
-          SIGNED_URL_EXPIRATION_MINUTES=60
-          LOG_LEVEL=INFO
-          LOG_FORMAT=json
-          DEBUG=false
+          ENVIRONMENT: staging
+          FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
+          FIREBASE_DATABASE_ID: ${{ secrets.STAGING_FIREBASE_DATABASE_ID || secrets.FIREBASE_DATABASE_ID }}
+          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+          GCS_BUCKET_NAME: ${{ secrets.STAGING_GCS_BUCKET_NAME || secrets.GCS_BUCKET_NAME }}
+          JWT_SECRET_KEY: ${{ secrets.JWT_SECRET_KEY }}
+          JWT_ALGORITHM: HS256
+          ACCESS_TOKEN_EXPIRE_MINUTES: 30
+          SESSION_DURATION_HOURS: 2
+          REFRESH_SESSION_DURATION_DAYS: 7
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_MODEL: ${{ secrets.OPENAI_MODEL || 'gpt-5-mini' }}
+          OPENAI_MAX_TOKENS: 4000
+          OPENAI_TEMPERATURE: 0.0
+          LLAMAPARSE_API_KEY: ${{ secrets.LLAMAPARSE_API_KEY }}
+          PINECONE_API_KEY: ${{ secrets.PINECONE_API_KEY }}
+          PINECONE_ENVIRONMENT: ${{ secrets.PINECONE_ENVIRONMENT }}
+          PINECONE_INDEX_NAME: ${{ secrets.PINECONE_INDEX_NAME || 'document-intelligence' }}
+          PRODUCTION_CORS_ORIGINS: ${{ secrets.STAGING_CORS_ORIGINS || '["http://localhost:3000"]' }}
+          FRONTEND_DOMAIN: ${{ secrets.FRONTEND_DOMAIN || 'localhost' }}
+          MAX_FILE_SIZE: 52428800
+          ALLOWED_FILE_TYPES: '["pdf", "xlsx"]'
+          SIGNED_URL_EXPIRATION_MINUTES: 60
+          LOG_LEVEL: INFO
+          LOG_FORMAT: json
+          DEBUG: false
           EOF
 
       - name: Deploy to Cloud Run (Staging)
@@ -274,32 +274,32 @@ jobs:
       - name: Create environment variables file
         run: |
           cat > .env.production << EOF
-          ENVIRONMENT=production
-          FIREBASE_PROJECT_ID=${{ secrets.FIREBASE_PROJECT_ID }}
-          FIREBASE_DATABASE_ID=${{ secrets.FIREBASE_DATABASE_ID }}
-          GCP_PROJECT_ID=${{ secrets.GCP_PROJECT_ID }}
-          GCS_BUCKET_NAME=${{ secrets.GCS_BUCKET_NAME }}
-          JWT_SECRET_KEY=${{ secrets.JWT_SECRET_KEY }}
-          JWT_ALGORITHM=HS256
-          ACCESS_TOKEN_EXPIRE_MINUTES=30
-          SESSION_DURATION_HOURS=2
-          REFRESH_SESSION_DURATION_DAYS=7
-          OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
-          OPENAI_MODEL=${{ secrets.OPENAI_MODEL || 'gpt-5-mini' }}
-          OPENAI_MAX_TOKENS=4000
-          OPENAI_TEMPERATURE=0.0
-          LLAMAPARSE_API_KEY=${{ secrets.LLAMAPARSE_API_KEY }}
-          PINECONE_API_KEY=${{ secrets.PINECONE_API_KEY }}
-          PINECONE_ENVIRONMENT=${{ secrets.PINECONE_ENVIRONMENT }}
-          PINECONE_INDEX_NAME=${{ secrets.PINECONE_INDEX_NAME || 'document-intelligence' }}
-          PRODUCTION_CORS_ORIGINS=${{ secrets.PRODUCTION_CORS_ORIGINS }}
-          FRONTEND_DOMAIN=${{ secrets.FRONTEND_DOMAIN }}
-          MAX_FILE_SIZE=52428800
-          ALLOWED_FILE_TYPES='["pdf", "xlsx"]'
-          SIGNED_URL_EXPIRATION_MINUTES=60
-          LOG_LEVEL=INFO
-          LOG_FORMAT=json
-          DEBUG=false
+          ENVIRONMENT: production
+          FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
+          FIREBASE_DATABASE_ID: ${{ secrets.FIREBASE_DATABASE_ID }}
+          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+          GCS_BUCKET_NAME: ${{ secrets.GCS_BUCKET_NAME }}
+          JWT_SECRET_KEY: ${{ secrets.JWT_SECRET_KEY }}
+          JWT_ALGORITHM: HS256
+          ACCESS_TOKEN_EXPIRE_MINUTES: 30
+          SESSION_DURATION_HOURS: 2
+          REFRESH_SESSION_DURATION_DAYS: 7
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_MODEL: ${{ secrets.OPENAI_MODEL || 'gpt-5-mini' }}
+          OPENAI_MAX_TOKENS: 4000
+          OPENAI_TEMPERATURE: 0.0
+          LLAMAPARSE_API_KEY: ${{ secrets.LLAMAPARSE_API_KEY }}
+          PINECONE_API_KEY: ${{ secrets.PINECONE_API_KEY }}
+          PINECONE_ENVIRONMENT: ${{ secrets.PINECONE_ENVIRONMENT }}
+          PINECONE_INDEX_NAME: ${{ secrets.PINECONE_INDEX_NAME || 'document-intelligence' }}
+          PRODUCTION_CORS_ORIGINS: ${{ secrets.PRODUCTION_CORS_ORIGINS }}
+          FRONTEND_DOMAIN: ${{ secrets.FRONTEND_DOMAIN }}
+          MAX_FILE_SIZE: 52428800
+          ALLOWED_FILE_TYPES: '["pdf", "xlsx"]'
+          SIGNED_URL_EXPIRATION_MINUTES: 60
+          LOG_LEVEL: INFO
+          LOG_FORMAT: json
+          DEBUG: false
           EOF
 
       - name: Deploy to Cloud Run (Production)
