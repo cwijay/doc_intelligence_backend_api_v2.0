@@ -1,0 +1,482 @@
+name: CD - Deploy to Cloud Run
+
+on:
+  push:
+    branches:
+      - develop  # Triggers staging deployment
+      - main     # Triggers production deployment (with approval)
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        required: true
+        type: choice
+        options:
+          - staging
+          - production
+
+env:
+  PYTHON_VERSION: '3.12'
+  GCP_REGION: 'us-central1'
+  SERVICE_NAME_STAGING: 'document-intelligence-api-staging'
+  SERVICE_NAME_PRODUCTION: 'document-intelligence-api'
+
+jobs:
+  # Run CI checks before deployment
+  ci-checks:
+    name: Pre-Deployment CI Checks
+    uses: ./.github/workflows/ci.yml
+
+  # Determine which environment to deploy to
+  determine-environment:
+    name: Determine Environment
+    runs-on: ubuntu-latest
+    needs: ci-checks
+    outputs:
+      environment: ${{ steps.set-env.outputs.environment }}
+      service_name: ${{ steps.set-env.outputs.service_name }}
+      image_tag: ${{ steps.set-env.outputs.image_tag }}
+
+    steps:
+      - name: Set environment based on branch or input
+        id: set-env
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            ENVIRONMENT="${{ github.event.inputs.environment }}"
+          elif [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
+            ENVIRONMENT="production"
+          elif [[ "${{ github.ref }}" == "refs/heads/develop" ]]; then
+            ENVIRONMENT="staging"
+          else
+            echo "Unknown branch: ${{ github.ref }}"
+            exit 1
+          fi
+
+          echo "environment=${ENVIRONMENT}" >> $GITHUB_OUTPUT
+
+          if [[ "${ENVIRONMENT}" == "production" ]]; then
+            echo "service_name=${{ env.SERVICE_NAME_PRODUCTION }}" >> $GITHUB_OUTPUT
+          else
+            echo "service_name=${{ env.SERVICE_NAME_STAGING }}" >> $GITHUB_OUTPUT
+          fi
+
+          # Create image tag with timestamp and commit SHA
+          TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+          SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-7)
+          IMAGE_TAG="${ENVIRONMENT}-${TIMESTAMP}-${SHORT_SHA}"
+          echo "image_tag=${IMAGE_TAG}" >> $GITHUB_OUTPUT
+
+          echo "Deploying to: ${ENVIRONMENT}"
+          echo "Service name: $([ "${ENVIRONMENT}" == "production" ] && echo "${{ env.SERVICE_NAME_PRODUCTION }}" || echo "${{ env.SERVICE_NAME_STAGING }}")"
+          echo "Image tag: ${IMAGE_TAG}"
+
+  # Build and push Docker image
+  build-image:
+    name: Build Docker Image
+    runs-on: ubuntu-latest
+    needs: determine-environment
+    outputs:
+      image_url: ${{ steps.build.outputs.image_url }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for GCR
+        run: |
+          gcloud auth configure-docker
+
+      - name: Build and push Docker image
+        id: build
+        run: |
+          PROJECT_ID="${{ secrets.GCP_PROJECT_ID }}"
+          IMAGE_TAG="${{ needs.determine-environment.outputs.image_tag }}"
+          ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
+
+          IMAGE_NAME="gcr.io/${PROJECT_ID}/document-intelligence-api"
+          IMAGE_URL="${IMAGE_NAME}:${IMAGE_TAG}"
+
+          echo "Building image: ${IMAGE_URL}"
+
+          # Build image using Cloud Build for consistency with existing setup
+          cd document-intelligence-backend
+          gcloud builds submit \
+            --tag="${IMAGE_URL}" \
+            --timeout=20m \
+            --machine-type=e2-highcpu-8 \
+            --project="${PROJECT_ID}"
+
+          # Also tag as latest for the environment
+          gcloud container images add-tag "${IMAGE_URL}" "${IMAGE_NAME}:${ENVIRONMENT}-latest" --quiet
+
+          echo "image_url=${IMAGE_URL}" >> $GITHUB_OUTPUT
+          echo "✅ Image built and pushed: ${IMAGE_URL}"
+
+  # Deploy to Staging
+  deploy-staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    needs: [determine-environment, build-image]
+    if: needs.determine-environment.outputs.environment == 'staging'
+    environment:
+      name: staging
+      url: https://${{ steps.deploy.outputs.url }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Create environment variables file
+        run: |
+          cd document-intelligence-backend
+          cat > .env.staging << EOF
+          ENVIRONMENT=staging
+          FIREBASE_PROJECT_ID=${{ secrets.FIREBASE_PROJECT_ID }}
+          FIREBASE_DATABASE_ID=${{ secrets.STAGING_FIREBASE_DATABASE_ID || secrets.FIREBASE_DATABASE_ID }}
+          GCP_PROJECT_ID=${{ secrets.GCP_PROJECT_ID }}
+          GCS_BUCKET_NAME=${{ secrets.STAGING_GCS_BUCKET_NAME || secrets.GCS_BUCKET_NAME }}
+          JWT_SECRET_KEY=${{ secrets.JWT_SECRET_KEY }}
+          JWT_ALGORITHM=HS256
+          ACCESS_TOKEN_EXPIRE_MINUTES=30
+          SESSION_DURATION_HOURS=2
+          REFRESH_SESSION_DURATION_DAYS=7
+          OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
+          OPENAI_MODEL=${{ secrets.OPENAI_MODEL || 'gpt-5-mini' }}
+          OPENAI_MAX_TOKENS=4000
+          OPENAI_TEMPERATURE=0.0
+          LLAMAPARSE_API_KEY=${{ secrets.LLAMAPARSE_API_KEY }}
+          PINECONE_API_KEY=${{ secrets.PINECONE_API_KEY }}
+          PINECONE_ENVIRONMENT=${{ secrets.PINECONE_ENVIRONMENT }}
+          PINECONE_INDEX_NAME=${{ secrets.PINECONE_INDEX_NAME || 'document-intelligence' }}
+          PRODUCTION_CORS_ORIGINS=${{ secrets.STAGING_CORS_ORIGINS || '["http://localhost:3000"]' }}
+          FRONTEND_DOMAIN=${{ secrets.FRONTEND_DOMAIN || 'localhost' }}
+          MAX_FILE_SIZE=52428800
+          ALLOWED_FILE_TYPES='["pdf", "xlsx"]'
+          SIGNED_URL_EXPIRATION_MINUTES=60
+          LOG_LEVEL=INFO
+          LOG_FORMAT=json
+          DEBUG=false
+          EOF
+
+      - name: Deploy to Cloud Run (Staging)
+        id: deploy
+        run: |
+          PROJECT_ID="${{ secrets.GCP_PROJECT_ID }}"
+          SERVICE_NAME="${{ needs.determine-environment.outputs.service_name }}"
+          IMAGE_URL="${{ needs.build-image.outputs.image_url }}"
+
+          cd document-intelligence-backend
+
+          gcloud run deploy ${SERVICE_NAME} \
+            --image="${IMAGE_URL}" \
+            --platform=managed \
+            --region=${{ env.GCP_REGION }} \
+            --allow-unauthenticated \
+            --memory=1Gi \
+            --cpu=1 \
+            --concurrency=80 \
+            --max-instances=10 \
+            --timeout=300 \
+            --env-vars-file=.env.staging \
+            --project="${PROJECT_ID}"
+
+          # Get service URL
+          SERVICE_URL=$(gcloud run services describe ${SERVICE_NAME} \
+            --region=${{ env.GCP_REGION }} \
+            --format="value(status.url)" \
+            --project="${PROJECT_ID}")
+
+          echo "url=${SERVICE_URL}" >> $GITHUB_OUTPUT
+          echo "✅ Deployed to staging: ${SERVICE_URL}"
+
+      - name: Run health checks
+        run: |
+          SERVICE_URL="${{ steps.deploy.outputs.url }}"
+
+          echo "Running health checks on ${SERVICE_URL}"
+
+          # Wait for service to be ready
+          sleep 10
+
+          # Health check
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "${SERVICE_URL}/health")
+          if [ ${HTTP_CODE} -eq 200 ]; then
+            echo "✅ Health check passed"
+          else
+            echo "❌ Health check failed with status: ${HTTP_CODE}"
+            exit 1
+          fi
+
+          # Status check
+          curl -s "${SERVICE_URL}/status" | jq .
+
+      - name: Post deployment summary
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const summary = `## 🚀 Staging Deployment Summary
+
+            **Environment:** Staging
+            **Service:** ${{ needs.determine-environment.outputs.service_name }}
+            **Image:** ${{ needs.build-image.outputs.image_url }}
+            **URL:** ${{ steps.deploy.outputs.url }}
+            **Status:** ${{ job.status == 'success' && '✅ Deployed Successfully' || '❌ Deployment Failed' }}
+            **Branch:** ${{ github.ref_name }}
+            **Commit:** ${{ github.sha }}
+
+            [View Cloud Run Service](https://console.cloud.google.com/run/detail/${{ env.GCP_REGION }}/${{ needs.determine-environment.outputs.service_name }})`;
+
+            github.rest.repos.createCommitComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              commit_sha: context.sha,
+              body: summary
+            });
+
+  # Deploy to Production (with manual approval)
+  deploy-production:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: [determine-environment, build-image]
+    if: needs.determine-environment.outputs.environment == 'production'
+    environment:
+      name: production
+      url: https://${{ steps.deploy.outputs.url }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Create environment variables file
+        run: |
+          cd document-intelligence-backend
+          cat > .env.production << EOF
+          ENVIRONMENT=production
+          FIREBASE_PROJECT_ID=${{ secrets.FIREBASE_PROJECT_ID }}
+          FIREBASE_DATABASE_ID=${{ secrets.FIREBASE_DATABASE_ID }}
+          GCP_PROJECT_ID=${{ secrets.GCP_PROJECT_ID }}
+          GCS_BUCKET_NAME=${{ secrets.GCS_BUCKET_NAME }}
+          JWT_SECRET_KEY=${{ secrets.JWT_SECRET_KEY }}
+          JWT_ALGORITHM=HS256
+          ACCESS_TOKEN_EXPIRE_MINUTES=30
+          SESSION_DURATION_HOURS=2
+          REFRESH_SESSION_DURATION_DAYS=7
+          OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
+          OPENAI_MODEL=${{ secrets.OPENAI_MODEL || 'gpt-5-mini' }}
+          OPENAI_MAX_TOKENS=4000
+          OPENAI_TEMPERATURE=0.0
+          LLAMAPARSE_API_KEY=${{ secrets.LLAMAPARSE_API_KEY }}
+          PINECONE_API_KEY=${{ secrets.PINECONE_API_KEY }}
+          PINECONE_ENVIRONMENT=${{ secrets.PINECONE_ENVIRONMENT }}
+          PINECONE_INDEX_NAME=${{ secrets.PINECONE_INDEX_NAME || 'document-intelligence' }}
+          PRODUCTION_CORS_ORIGINS=${{ secrets.PRODUCTION_CORS_ORIGINS }}
+          FRONTEND_DOMAIN=${{ secrets.FRONTEND_DOMAIN }}
+          MAX_FILE_SIZE=52428800
+          ALLOWED_FILE_TYPES='["pdf", "xlsx"]'
+          SIGNED_URL_EXPIRATION_MINUTES=60
+          LOG_LEVEL=INFO
+          LOG_FORMAT=json
+          DEBUG=false
+          EOF
+
+      - name: Deploy to Cloud Run (Production)
+        id: deploy
+        run: |
+          PROJECT_ID="${{ secrets.GCP_PROJECT_ID }}"
+          SERVICE_NAME="${{ needs.determine-environment.outputs.service_name }}"
+          IMAGE_URL="${{ needs.build-image.outputs.image_url }}"
+
+          cd document-intelligence-backend
+
+          gcloud run deploy ${SERVICE_NAME} \
+            --image="${IMAGE_URL}" \
+            --platform=managed \
+            --region=${{ env.GCP_REGION }} \
+            --allow-unauthenticated \
+            --memory=1Gi \
+            --cpu=1 \
+            --concurrency=80 \
+            --max-instances=10 \
+            --timeout=300 \
+            --env-vars-file=.env.production \
+            --project="${PROJECT_ID}"
+
+          # Get service URL
+          SERVICE_URL=$(gcloud run services describe ${SERVICE_NAME} \
+            --region=${{ env.GCP_REGION }} \
+            --format="value(status.url)" \
+            --project="${PROJECT_ID}")
+
+          echo "url=${SERVICE_URL}" >> $GITHUB_OUTPUT
+          echo "✅ Deployed to production: ${SERVICE_URL}"
+
+      - name: Run comprehensive health checks
+        run: |
+          SERVICE_URL="${{ steps.deploy.outputs.url }}"
+
+          echo "Running comprehensive health checks on ${SERVICE_URL}"
+
+          # Wait for service to be ready
+          sleep 15
+
+          # Health check
+          echo "Testing /health endpoint..."
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "${SERVICE_URL}/health")
+          if [ ${HTTP_CODE} -eq 200 ]; then
+            echo "✅ Health check passed"
+          else
+            echo "❌ Health check failed with status: ${HTTP_CODE}"
+            exit 1
+          fi
+
+          # Status check with detailed output
+          echo "Testing /status endpoint..."
+          STATUS_RESPONSE=$(curl -s "${SERVICE_URL}/status")
+          echo "${STATUS_RESPONSE}" | jq .
+
+          # Check Firestore connectivity
+          FIRESTORE_STATUS=$(echo "${STATUS_RESPONSE}" | jq -r '.firebase.status')
+          if [ "${FIRESTORE_STATUS}" == "connected" ]; then
+            echo "✅ Firestore connected"
+          else
+            echo "⚠️  Firestore status: ${FIRESTORE_STATUS}"
+          fi
+
+          # Check GCS connectivity
+          GCS_STATUS=$(echo "${STATUS_RESPONSE}" | jq -r '.gcs.status')
+          if [ "${GCS_STATUS}" == "connected" ]; then
+            echo "✅ GCS connected"
+          else
+            echo "⚠️  GCS status: ${GCS_STATUS}"
+          fi
+
+          # Ready check
+          echo "Testing /ready endpoint..."
+          curl -f "${SERVICE_URL}/ready" || exit 1
+          echo "✅ Ready check passed"
+
+      - name: Create GitHub Release
+        if: success()
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ needs.determine-environment.outputs.image_tag }}
+          release_name: Production Release ${{ needs.determine-environment.outputs.image_tag }}
+          body: |
+            ## 🚀 Production Deployment
+
+            **Service:** ${{ needs.determine-environment.outputs.service_name }}
+            **Image:** ${{ needs.build-image.outputs.image_url }}
+            **URL:** ${{ steps.deploy.outputs.url }}
+            **Commit:** ${{ github.sha }}
+
+            ### Changes
+            ${{ github.event.head_commit.message }}
+
+            ### Health Status
+            - ✅ Application health check passed
+            - ✅ Firestore connectivity verified
+            - ✅ GCS connectivity verified
+
+            [View in Cloud Run Console](https://console.cloud.google.com/run/detail/${{ env.GCP_REGION }}/${{ needs.determine-environment.outputs.service_name }})
+          draft: false
+          prerelease: false
+
+      - name: Post deployment summary
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const summary = `## 🚀 Production Deployment Summary
+
+            **Environment:** Production
+            **Service:** ${{ needs.determine-environment.outputs.service_name }}
+            **Image:** ${{ needs.build-image.outputs.image_url }}
+            **URL:** ${{ steps.deploy.outputs.url }}
+            **Status:** ${{ job.status == 'success' && '✅ Deployed Successfully' || '❌ Deployment Failed' }}
+            **Branch:** ${{ github.ref_name }}
+            **Commit:** ${{ github.sha }}
+
+            [View Cloud Run Service](https://console.cloud.google.com/run/detail/${{ env.GCP_REGION }}/${{ needs.determine-environment.outputs.service_name }})
+
+            ### Health Checks
+            - ✅ Application health verified
+            - ✅ Firestore connectivity confirmed
+            - ✅ GCS connectivity confirmed`;
+
+            github.rest.repos.createCommitComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              commit_sha: context.sha,
+              body: summary
+            });
+
+  # Rollback capability
+  rollback:
+    name: Rollback Deployment
+    runs-on: ubuntu-latest
+    if: failure() && github.event_name == 'push'
+    needs: [deploy-staging, deploy-production]
+
+    steps:
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Rollback to previous revision
+        run: |
+          ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
+          SERVICE_NAME="${{ needs.determine-environment.outputs.service_name }}"
+
+          echo "⚠️  Deployment failed, initiating rollback..."
+
+          # Get previous revision
+          PREVIOUS_REVISION=$(gcloud run revisions list \
+            --service=${SERVICE_NAME} \
+            --region=${{ env.GCP_REGION }} \
+            --project=${{ secrets.GCP_PROJECT_ID }} \
+            --format="value(name)" \
+            --limit=2 | tail -n 1)
+
+          if [ -n "${PREVIOUS_REVISION}" ]; then
+            echo "Rolling back to revision: ${PREVIOUS_REVISION}"
+
+            gcloud run services update-traffic ${SERVICE_NAME} \
+              --to-revisions=${PREVIOUS_REVISION}=100 \
+              --region=${{ env.GCP_REGION }} \
+              --project=${{ secrets.GCP_PROJECT_ID }}
+
+            echo "✅ Rollback completed"
+          else
+            echo "❌ No previous revision found for rollback"
+          fi

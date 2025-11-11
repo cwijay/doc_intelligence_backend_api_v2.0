@@ -1,0 +1,262 @@
+name: CI - Continuous Integration
+
+on:
+  pull_request:
+    branches: ['*']
+  push:
+    branches:
+      - main
+      - develop
+  workflow_dispatch:
+
+env:
+  PYTHON_VERSION: '3.12'
+
+jobs:
+  lint-and-format:
+    name: Code Quality Checks
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install UV
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      - name: Install dependencies
+        run: |
+          cd document-intelligence-backend
+          uv sync
+
+      - name: Check code formatting with Black
+        run: |
+          cd document-intelligence-backend
+          uv run black --check app/ tests/
+        continue-on-error: false
+
+      - name: Lint with Ruff
+        run: |
+          cd document-intelligence-backend
+          uv run ruff check app/ tests/
+        continue-on-error: false
+
+      - name: Type check with MyPy
+        run: |
+          cd document-intelligence-backend
+          uv run mypy app/
+        continue-on-error: true  # Type checking can be strict, make it non-blocking initially
+
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+    needs: lint-and-format
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install UV
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      - name: Install dependencies
+        run: |
+          cd document-intelligence-backend
+          uv sync
+
+      - name: Run tests with pytest
+        run: |
+          cd document-intelligence-backend
+          uv run pytest tests/ -v --asyncio-mode=auto --tb=short
+        env:
+          # Mock environment variables for testing
+          FIREBASE_PROJECT_ID: "test-project"
+          FIREBASE_DATABASE_ID: "test-database"
+          GCS_BUCKET_NAME: "test-bucket"
+          JWT_SECRET_KEY: "test-secret-key-for-ci-only"
+          ENVIRONMENT: "test"
+          DEBUG: "false"
+
+      - name: Generate coverage report
+        if: always()
+        run: |
+          cd document-intelligence-backend
+          uv run pytest tests/ --cov=app --cov-report=xml --cov-report=html --asyncio-mode=auto
+        continue-on-error: true
+        env:
+          FIREBASE_PROJECT_ID: "test-project"
+          FIREBASE_DATABASE_ID: "test-database"
+          GCS_BUCKET_NAME: "test-bucket"
+          JWT_SECRET_KEY: "test-secret-key-for-ci-only"
+          ENVIRONMENT: "test"
+          DEBUG: "false"
+
+      - name: Upload coverage reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: document-intelligence-backend/htmlcov/
+          retention-days: 30
+
+  security-scan:
+    name: Security Scanning
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install UV
+        uses: astral-sh/setup-uv@v3
+
+      - name: Install dependencies
+        run: |
+          cd document-intelligence-backend
+          uv sync
+
+      - name: Run security scan with pip-audit (via UV)
+        run: |
+          cd document-intelligence-backend
+          # Export requirements for security scanning
+          uv pip freeze > requirements-freeze.txt
+          uv tool run pip-audit -r requirements-freeze.txt
+        continue-on-error: true  # Don't block on security warnings initially
+
+      - name: Check for secrets with truffleHog
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./
+          base: ${{ github.event.repository.default_branch }}
+          head: HEAD
+        continue-on-error: true
+
+  build-validation:
+    name: Validate Docker Build
+    runs-on: ubuntu-latest
+    needs: [lint-and-format, test]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker image (no push)
+        uses: docker/build-push-action@v5
+        with:
+          context: ./document-intelligence-backend
+          file: ./document-intelligence-backend/Dockerfile
+          push: false
+          tags: document-intelligence-api:ci-test
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          platforms: linux/amd64
+
+      - name: Test Docker image
+        run: |
+          docker run --rm -d \
+            --name test-container \
+            -p 8080:8080 \
+            -e FIREBASE_PROJECT_ID=test-project \
+            -e FIREBASE_DATABASE_ID=test-db \
+            -e GCS_BUCKET_NAME=test-bucket \
+            -e JWT_SECRET_KEY=test-key \
+            -e ENVIRONMENT=test \
+            document-intelligence-api:ci-test
+
+          # Wait for container to start
+          sleep 10
+
+          # Check if container is running
+          docker ps | grep test-container
+
+          # Test health endpoint
+          curl -f http://localhost:8080/health || exit 1
+
+          # Stop container
+          docker stop test-container
+
+  ci-summary:
+    name: CI Summary
+    runs-on: ubuntu-latest
+    needs: [lint-and-format, test, security-scan, build-validation]
+    if: always()
+
+    steps:
+      - name: Check CI Status
+        run: |
+          echo "CI Pipeline Summary:"
+          echo "===================="
+          echo "Code Quality: ${{ needs.lint-and-format.result }}"
+          echo "Tests: ${{ needs.test.result }}"
+          echo "Security Scan: ${{ needs.security-scan.result }}"
+          echo "Docker Build: ${{ needs.build-validation.result }}"
+
+          if [[ "${{ needs.lint-and-format.result }}" != "success" ]]; then
+            echo "❌ Code quality checks failed!"
+            exit 1
+          fi
+
+          if [[ "${{ needs.test.result }}" != "success" ]]; then
+            echo "❌ Tests failed!"
+            exit 1
+          fi
+
+          if [[ "${{ needs.build-validation.result }}" != "success" ]]; then
+            echo "❌ Docker build failed!"
+            exit 1
+          fi
+
+          echo "✅ All CI checks passed!"
+
+      - name: Comment on PR (if applicable)
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const summary = `## 🚀 CI Pipeline Results
+
+            | Check | Status |
+            |-------|--------|
+            | Code Quality | ${{ needs.lint-and-format.result == 'success' && '✅ Passed' || '❌ Failed' }} |
+            | Tests | ${{ needs.test.result == 'success' && '✅ Passed' || '❌ Failed' }} |
+            | Security Scan | ${{ needs.security-scan.result == 'success' && '✅ Passed' || '⚠️  Warning' }} |
+            | Docker Build | ${{ needs.build-validation.result == 'success' && '✅ Passed' || '❌ Failed' }} |
+
+            ${
+              needs.lint-and-format.result === 'success' &&
+              needs.test.result === 'success' &&
+              needs.build-validation.result === 'success'
+                ? '✅ **All checks passed! Ready for deployment.**'
+                : '❌ **Some checks failed. Please review the logs.**'
+            }`;
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: summary
+            });

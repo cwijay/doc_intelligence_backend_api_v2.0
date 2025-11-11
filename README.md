@@ -82,7 +82,7 @@ The document processing system uses a **Facade Pattern** with 7 specialized serv
 - **File Storage**: Google Cloud Storage with signed URLs and CORS configuration
 - **Authentication**: **Session-based JWT** with automatic refresh token rotation
 - **Dependency Management**: **uv** (ultra-fast Python package installer - 10-100x faster than pip)
-- **Deployment**: Google Cloud Run with automated CI/CD via Cloud Build
+- **Deployment**: Google Cloud Run with **GitHub Actions CI/CD** (automated staging/production) or manual deployment via Cloud Build
 
 ### **AI & LLM Integration**
 - **Language Models**: OpenAI GPT-5-mini (configurable) via OpenAI 1.86.0
@@ -793,14 +793,146 @@ asyncio.run(test())
 
 ## ☁️ Cloud Run Deployment
 
-### Prerequisites
+### 🚀 Option 1: GitHub Actions CI/CD (Recommended)
+
+**Automated deployment with staging and production environments.**
+
+The project includes comprehensive GitHub Actions workflows for automated CI/CD:
+
+#### Features
+- ✅ **Automatic CI checks** on all pull requests
+- ✅ **Auto-deploy to staging** from `develop` branch
+- ✅ **Production deployment** from `main` branch with manual approval
+- ✅ **Health checks** and automatic rollback on failure
+- ✅ **Security scanning** and code quality checks
+
+#### Quick Setup
+
+**1. Complete GCP Service Account Setup:**
+
+Follow the detailed guide: `GCP_SERVICE_ACCOUNT_SETUP.md`
+
+```bash
+# Quick setup script included in the guide
+# Creates service account with required permissions
+# Generates and downloads JSON key file
+```
+
+**2. Configure GitHub Secrets:**
+
+Go to **Repository Settings > Secrets and variables > Actions** and add:
+
+```
+# GCP Authentication
+GCP_SA_KEY                    # Base64-encoded service account JSON key
+GCP_PROJECT_ID                # biz2bricksv1
+GCP_REGION                    # us-central1
+
+# Firebase/Firestore
+FIREBASE_PROJECT_ID           # biz2bricksv1
+FIREBASE_DATABASE_ID          # biz2bricks-docdb-v1
+GCS_BUCKET_NAME               # biz2bricksv1-document-store
+
+# Security
+JWT_SECRET_KEY                # Strong 256-bit secret (use: openssl rand -base64 32)
+
+# AI Services
+OPENAI_API_KEY                # OpenAI API key
+OPENAI_MODEL                  # gpt-5-mini (optional)
+LLAMAPARSE_API_KEY            # LlamaParse API key
+PINECONE_API_KEY              # Pinecone API key
+PINECONE_ENVIRONMENT          # Pinecone environment
+
+# CORS
+PRODUCTION_CORS_ORIGINS       # JSON array: ["https://yourdomain.com"]
+FRONTEND_DOMAIN               # biztobricks.com
+
+# Optional: Staging-specific overrides
+STAGING_FIREBASE_DATABASE_ID  # Separate staging database (if different)
+STAGING_GCS_BUCKET_NAME       # Separate staging bucket (if different)
+STAGING_CORS_ORIGINS          # Staging frontend URLs
+```
+
+**3. Setup GitHub Environments:**
+
+**Staging:**
+- Go to **Settings > Environments** → **New environment**
+- Name: `staging`
+- No protection rules (auto-deploy)
+
+**Production:**
+- Name: `production`
+- Protection rules:
+  - ✅ Required reviewers: Add 1+ reviewers
+  - ✅ Deployment branches: Only `main`
+
+**4. Deploy:**
+
+```bash
+# Test CI on a feature branch
+git checkout -b feature/my-feature
+git push origin feature/my-feature
+# Open PR → CI runs automatically
+
+# Deploy to staging
+git checkout develop
+git merge feature/my-feature
+git push origin develop
+# ✅ Automatic deployment to staging
+
+# Deploy to production
+git checkout main
+git merge develop
+git push origin main
+# ⏳ Wait for manual approval
+# ✅ Production deployment
+```
+
+#### Workflow Details
+
+**CI Workflow** (runs on all PRs):
+- Code formatting (Black) and linting (Ruff)
+- Type checking (MyPy)
+- Tests with pytest and coverage
+- Security scanning
+- Docker build validation
+
+**CD Workflow**:
+- **Staging**: Auto-deploy from `develop` → `document-intelligence-api-staging`
+- **Production**: Manual approval from `main` → `document-intelligence-api`
+- Automatic health checks and rollback
+- GitHub release creation
+
+**Monitoring:**
+```bash
+# View workflows in GitHub Actions tab
+
+# Check deployment status
+gcloud run services describe document-intelligence-api \
+  --region=us-central1 --format="value(status.url)"
+
+# View logs
+gcloud run services logs read document-intelligence-api \
+  --region=us-central1 --limit=50
+```
+
+**Detailed Documentation:**
+- Full workflow docs: `.github/workflows/README.md`
+- GCP setup guide: `GCP_SERVICE_ACCOUNT_SETUP.md`
+- Environment templates: `.github/env/`
+
+---
+
+### 🛠️ Option 2: Manual Deployment
+
+#### Prerequisites
 
 - `gcloud`, `docker`, and `uv` installed locally
 - Authenticated to the target project: `gcloud auth login && gcloud config set project <PROJECT_ID>`
 - Application Default Credentials if running from a workstation: `gcloud auth application-default login`
 - A named Firestore database (for example `biz2bricks-docdb-v1`) and a GCS bucket (for example `biz2bricksv1-document-store`)
 
-### Unified Deployment Script (Recommended)
+#### Unified Deployment Script (Recommended)
 
 The repository ships with `deploy_full.sh`, a one-stop deployment workflow that:
 
