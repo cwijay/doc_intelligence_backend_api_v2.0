@@ -115,8 +115,8 @@ jobs:
             --project="${PROJECT_ID}" \
             --default-buckets-behavior=REGIONAL_USER_OWNED_BUCKET
 
-          # Also tag as latest for the environment
-          gcloud container images add-tag "${IMAGE_URL}" "${IMAGE_NAME}:${ENVIRONMENT}-latest" --quiet
+          # Also tag as latest for the environment (skip if permissions issue)
+          gcloud container images add-tag "${IMAGE_URL}" "${IMAGE_NAME}:${ENVIRONMENT}-latest" --quiet || echo "⚠️  Skipping tag creation (non-blocking)"
 
           echo "image_url=${IMAGE_URL}" >> $GITHUB_OUTPUT
           echo "✅ Image built and pushed: ${IMAGE_URL}"
