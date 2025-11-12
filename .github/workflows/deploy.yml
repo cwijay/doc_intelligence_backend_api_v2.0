@@ -70,13 +70,15 @@ jobs:
           echo "Service name: $([ "${ENVIRONMENT}" == "production" ] && echo "${{ env.SERVICE_NAME_PRODUCTION }}" || echo "${{ env.SERVICE_NAME_STAGING }}")"
           echo "Image tag: ${IMAGE_TAG}"
 
-  # Build and push Docker image
-  build-image:
-    name: Build Docker Image
+  # Build and Deploy to Staging (combined job to avoid GitHub secret blocking)
+  build-and-deploy-staging:
+    name: Build & Deploy to Staging
     runs-on: ubuntu-latest
     needs: determine-environment
-    outputs:
-      image_url: ${{ steps.build.outputs.image_url }}
+    if: needs.determine-environment.outputs.environment == 'staging'
+    environment:
+      name: staging
+      url: https://${{ steps.deploy.outputs.url }}
 
     steps:
       - name: Checkout code
@@ -96,6 +98,7 @@ jobs:
 
       - name: Build and push Docker image
         id: build
+        working-directory: document-intelligence-backend
         run: |
           set -e  # Exit immediately on error
 
@@ -108,8 +111,7 @@ jobs:
 
           echo "Building image: ${IMAGE_URL}"
 
-          # Build image using Cloud Build for consistency with existing setup
-          # Using regional user-owned bucket for logs (2025 best practice)
+          # Build image using Cloud Build
           gcloud builds submit . \
             --tag="${IMAGE_URL}" \
             --timeout=20m \
@@ -117,7 +119,7 @@ jobs:
             --project="${PROJECT_ID}" \
             --default-buckets-behavior=REGIONAL_USER_OWNED_BUCKET
 
-          # Verify image was created successfully (non-blocking if permissions issue)
+          # Verify image was created (non-blocking if permissions issue)
           echo "Verifying image was created..."
           if gcloud container images describe "${IMAGE_URL}" --project="${PROJECT_ID}" 2>/dev/null; then
             echo "✅ Image verified successfully"
@@ -125,33 +127,13 @@ jobs:
             echo "⚠️  Image verification skipped (permission issue, but Cloud Build reported SUCCESS)"
           fi
 
-          # Also tag as latest for the environment (skip if permissions issue)
+          # Tag as latest
           gcloud container images add-tag "${IMAGE_URL}" "${IMAGE_NAME}:${ENVIRONMENT}-latest" --quiet || echo "⚠️  Skipping tag creation (non-blocking)"
 
-          echo "image_url=${IMAGE_URL}" >> $GITHUB_OUTPUT
           echo "✅ Image built and pushed: ${IMAGE_URL}"
 
-  # Deploy to Staging
-  deploy-staging:
-    name: Deploy to Staging
-    runs-on: ubuntu-latest
-    needs: [determine-environment, build-image]
-    if: needs.determine-environment.outputs.environment == 'staging'
-    environment:
-      name: staging
-      url: https://${{ steps.deploy.outputs.url }}
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Authenticate to Google Cloud
-        uses: google-github-actions/auth@v2
-        with:
-          credentials_json: ${{ secrets.GCP_SA_KEY }}
-
-      - name: Set up Cloud SDK
-        uses: google-github-actions/setup-gcloud@v2
+          # Export IMAGE_URL for use in subsequent steps (same job, no cross-job output!)
+          echo "IMAGE_URL=${IMAGE_URL}" >> $GITHUB_ENV
 
       - name: Create environment variables file
         env:
@@ -215,9 +197,23 @@ jobs:
       - name: Deploy to Cloud Run (Staging)
         id: deploy
         run: |
+          set -e  # Exit immediately on error
+
           PROJECT_ID="${{ secrets.GCP_PROJECT_ID }}"
           SERVICE_NAME="${{ needs.determine-environment.outputs.service_name }}"
-          IMAGE_URL="${{ needs.build-image.outputs.image_url }}"
+          IMAGE_URL="${{ env.IMAGE_URL }}"
+
+          # Debug: Print values
+          echo "PROJECT_ID: ${PROJECT_ID}"
+          echo "SERVICE_NAME: ${SERVICE_NAME}"
+          echo "IMAGE_URL: ${IMAGE_URL}"
+
+          # Validate required values
+          if [ -z "${IMAGE_URL}" ]; then
+            echo "❌ ERROR: IMAGE_URL is empty!"
+            echo "Environment variable IMAGE_URL: ${IMAGE_URL}"
+            exit 1
+          fi
 
           gcloud run deploy ${SERVICE_NAME} \
             --image="${IMAGE_URL}" \
@@ -272,7 +268,7 @@ jobs:
 
             **Environment:** Staging
             **Service:** ${{ needs.determine-environment.outputs.service_name }}
-            **Image:** ${{ needs.build-image.outputs.image_url }}
+            **Image:** ${{ env.IMAGE_URL }}
             **URL:** ${{ steps.deploy.outputs.url }}
             **Status:** ${{ job.status == 'success' && '✅ Deployed Successfully' || '❌ Deployment Failed' }}
             **Branch:** ${{ github.ref_name }}
@@ -287,11 +283,11 @@ jobs:
               body: summary
             });
 
-  # Deploy to Production (with manual approval)
-  deploy-production:
-    name: Deploy to Production
+  # Build and Deploy to Production (with manual approval)
+  build-and-deploy-production:
+    name: Build & Deploy to Production
     runs-on: ubuntu-latest
-    needs: [determine-environment, build-image]
+    needs: determine-environment
     if: needs.determine-environment.outputs.environment == 'production'
     environment:
       name: production
@@ -308,6 +304,49 @@ jobs:
 
       - name: Set up Cloud SDK
         uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for GCR
+        run: |
+          gcloud auth configure-docker
+
+      - name: Build and push Docker image
+        id: build
+        working-directory: document-intelligence-backend
+        run: |
+          set -e  # Exit immediately on error
+
+          PROJECT_ID="${{ secrets.GCP_PROJECT_ID }}"
+          IMAGE_TAG="${{ needs.determine-environment.outputs.image_tag }}"
+          ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
+
+          IMAGE_NAME="gcr.io/${PROJECT_ID}/document-intelligence-api"
+          IMAGE_URL="${IMAGE_NAME}:${IMAGE_TAG}"
+
+          echo "Building image: ${IMAGE_URL}"
+
+          # Build image using Cloud Build
+          gcloud builds submit . \
+            --tag="${IMAGE_URL}" \
+            --timeout=20m \
+            --machine-type=e2-highcpu-8 \
+            --project="${PROJECT_ID}" \
+            --default-buckets-behavior=REGIONAL_USER_OWNED_BUCKET
+
+          # Verify image was created (non-blocking if permissions issue)
+          echo "Verifying image was created..."
+          if gcloud container images describe "${IMAGE_URL}" --project="${PROJECT_ID}" 2>/dev/null; then
+            echo "✅ Image verified successfully"
+          else
+            echo "⚠️  Image verification skipped (permission issue, but Cloud Build reported SUCCESS)"
+          fi
+
+          # Tag as latest
+          gcloud container images add-tag "${IMAGE_URL}" "${IMAGE_NAME}:${ENVIRONMENT}-latest" --quiet || echo "⚠️  Skipping tag creation (non-blocking)"
+
+          echo "✅ Image built and pushed: ${IMAGE_URL}"
+
+          # Export IMAGE_URL for use in subsequent steps (same job, no cross-job output!)
+          echo "IMAGE_URL=${IMAGE_URL}" >> $GITHUB_ENV
 
       - name: Create environment variables file
         env:
@@ -371,9 +410,23 @@ jobs:
       - name: Deploy to Cloud Run (Production)
         id: deploy
         run: |
+          set -e  # Exit immediately on error
+
           PROJECT_ID="${{ secrets.GCP_PROJECT_ID }}"
           SERVICE_NAME="${{ needs.determine-environment.outputs.service_name }}"
-          IMAGE_URL="${{ needs.build-image.outputs.image_url }}"
+          IMAGE_URL="${{ env.IMAGE_URL }}"
+
+          # Debug: Print values
+          echo "PROJECT_ID: ${PROJECT_ID}"
+          echo "SERVICE_NAME: ${SERVICE_NAME}"
+          echo "IMAGE_URL: ${IMAGE_URL}"
+
+          # Validate required values
+          if [ -z "${IMAGE_URL}" ]; then
+            echo "❌ ERROR: IMAGE_URL is empty!"
+            echo "Environment variable IMAGE_URL: ${IMAGE_URL}"
+            exit 1
+          fi
 
           gcloud run deploy ${SERVICE_NAME} \
             --image="${IMAGE_URL}" \
@@ -454,7 +507,7 @@ jobs:
             ## 🚀 Production Deployment
 
             **Service:** ${{ needs.determine-environment.outputs.service_name }}
-            **Image:** ${{ needs.build-image.outputs.image_url }}
+            **Image:** ${{ env.IMAGE_URL }}
             **URL:** ${{ steps.deploy.outputs.url }}
             **Commit:** ${{ github.sha }}
 
@@ -480,7 +533,7 @@ jobs:
 
             **Environment:** Production
             **Service:** ${{ needs.determine-environment.outputs.service_name }}
-            **Image:** ${{ needs.build-image.outputs.image_url }}
+            **Image:** ${{ env.IMAGE_URL }}
             **URL:** ${{ steps.deploy.outputs.url }}
             **Status:** ${{ job.status == 'success' && '✅ Deployed Successfully' || '❌ Deployment Failed' }}
             **Branch:** ${{ github.ref_name }}
@@ -505,7 +558,7 @@ jobs:
     name: Rollback Deployment
     runs-on: ubuntu-latest
     if: failure() && github.event_name == 'push'
-    needs: [deploy-staging, deploy-production]
+    needs: [build-and-deploy-staging, build-and-deploy-production]
 
     steps:
       - name: Authenticate to Google Cloud
