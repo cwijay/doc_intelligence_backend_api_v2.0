@@ -92,48 +92,6 @@ jobs:
       - name: Set up Cloud SDK
         uses: google-github-actions/setup-gcloud@v2
 
-      - name: Configure Docker for GCR
-        run: |
-          gcloud auth configure-docker
-
-      - name: Build and push Docker image
-        id: build
-        run: |
-          set -e  # Exit immediately on error
-
-          PROJECT_ID="${{ secrets.GCP_PROJECT_ID }}"
-          IMAGE_TAG="${{ needs.determine-environment.outputs.image_tag }}"
-          ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
-
-          IMAGE_NAME="gcr.io/${PROJECT_ID}/document-intelligence-api"
-          IMAGE_URL="${IMAGE_NAME}:${IMAGE_TAG}"
-
-          echo "Building image: ${IMAGE_URL}"
-
-          # Build image using Cloud Build
-          gcloud builds submit . \
-            --tag="${IMAGE_URL}" \
-            --timeout=20m \
-            --machine-type=e2-highcpu-8 \
-            --project="${PROJECT_ID}" \
-            --default-buckets-behavior=REGIONAL_USER_OWNED_BUCKET
-
-          # Verify image was created (non-blocking if permissions issue)
-          echo "Verifying image was created..."
-          if gcloud container images describe "${IMAGE_URL}" --project="${PROJECT_ID}" 2>/dev/null; then
-            echo "✅ Image verified successfully"
-          else
-            echo "⚠️  Image verification skipped (permission issue, but Cloud Build reported SUCCESS)"
-          fi
-
-          # Tag as latest
-          gcloud container images add-tag "${IMAGE_URL}" "${IMAGE_NAME}:${ENVIRONMENT}-latest" --quiet || echo "⚠️  Skipping tag creation (non-blocking)"
-
-          echo "✅ Image built and pushed: ${IMAGE_URL}"
-
-          # Export IMAGE_URL for use in subsequent steps (same job, no cross-job output!)
-          echo "IMAGE_URL=${IMAGE_URL}" >> $GITHUB_ENV
-
       - name: Create environment variables file
         env:
           FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
@@ -193,29 +151,21 @@ jobs:
                   f.write(f'{key}: "{escaped_value}"\n')
           PYTHON_SCRIPT
 
-      - name: Deploy to Cloud Run (Staging)
+      - name: Build and Deploy to Cloud Run from source (Staging)
         id: deploy
         run: |
           set -e  # Exit immediately on error
 
           PROJECT_ID="${{ secrets.GCP_PROJECT_ID }}"
           SERVICE_NAME="${{ needs.determine-environment.outputs.service_name }}"
-          IMAGE_URL="${{ env.IMAGE_URL }}"
 
           # Debug: Print values
           echo "PROJECT_ID: ${PROJECT_ID}"
           echo "SERVICE_NAME: ${SERVICE_NAME}"
-          echo "IMAGE_URL: ${IMAGE_URL}"
-
-          # Validate required values
-          if [ -z "${IMAGE_URL}" ]; then
-            echo "❌ ERROR: IMAGE_URL is empty!"
-            echo "Environment variable IMAGE_URL: ${IMAGE_URL}"
-            exit 1
-          fi
+          echo "Deploying from source (no registry permission needed)..."
 
           gcloud run deploy ${SERVICE_NAME} \
-            --image="${IMAGE_URL}" \
+            --source=. \
             --platform=managed \
             --region=${{ env.GCP_REGION }} \
             --allow-unauthenticated \
@@ -267,7 +217,7 @@ jobs:
 
             **Environment:** Staging
             **Service:** ${{ needs.determine-environment.outputs.service_name }}
-            **Image:** ${{ env.IMAGE_URL }}
+            **Build Method:** Source deployment (no image registry)
             **URL:** ${{ steps.deploy.outputs.url }}
             **Status:** ${{ job.status == 'success' && '✅ Deployed Successfully' || '❌ Deployment Failed' }}
             **Branch:** ${{ github.ref_name }}
@@ -303,48 +253,6 @@ jobs:
 
       - name: Set up Cloud SDK
         uses: google-github-actions/setup-gcloud@v2
-
-      - name: Configure Docker for GCR
-        run: |
-          gcloud auth configure-docker
-
-      - name: Build and push Docker image
-        id: build
-        run: |
-          set -e  # Exit immediately on error
-
-          PROJECT_ID="${{ secrets.GCP_PROJECT_ID }}"
-          IMAGE_TAG="${{ needs.determine-environment.outputs.image_tag }}"
-          ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
-
-          IMAGE_NAME="gcr.io/${PROJECT_ID}/document-intelligence-api"
-          IMAGE_URL="${IMAGE_NAME}:${IMAGE_TAG}"
-
-          echo "Building image: ${IMAGE_URL}"
-
-          # Build image using Cloud Build
-          gcloud builds submit . \
-            --tag="${IMAGE_URL}" \
-            --timeout=20m \
-            --machine-type=e2-highcpu-8 \
-            --project="${PROJECT_ID}" \
-            --default-buckets-behavior=REGIONAL_USER_OWNED_BUCKET
-
-          # Verify image was created (non-blocking if permissions issue)
-          echo "Verifying image was created..."
-          if gcloud container images describe "${IMAGE_URL}" --project="${PROJECT_ID}" 2>/dev/null; then
-            echo "✅ Image verified successfully"
-          else
-            echo "⚠️  Image verification skipped (permission issue, but Cloud Build reported SUCCESS)"
-          fi
-
-          # Tag as latest
-          gcloud container images add-tag "${IMAGE_URL}" "${IMAGE_NAME}:${ENVIRONMENT}-latest" --quiet || echo "⚠️  Skipping tag creation (non-blocking)"
-
-          echo "✅ Image built and pushed: ${IMAGE_URL}"
-
-          # Export IMAGE_URL for use in subsequent steps (same job, no cross-job output!)
-          echo "IMAGE_URL=${IMAGE_URL}" >> $GITHUB_ENV
 
       - name: Create environment variables file
         env:
@@ -405,29 +313,21 @@ jobs:
                   f.write(f'{key}: "{escaped_value}"\n')
           PYTHON_SCRIPT
 
-      - name: Deploy to Cloud Run (Production)
+      - name: Build and Deploy to Cloud Run from source (Production)
         id: deploy
         run: |
           set -e  # Exit immediately on error
 
           PROJECT_ID="${{ secrets.GCP_PROJECT_ID }}"
           SERVICE_NAME="${{ needs.determine-environment.outputs.service_name }}"
-          IMAGE_URL="${{ env.IMAGE_URL }}"
 
           # Debug: Print values
           echo "PROJECT_ID: ${PROJECT_ID}"
           echo "SERVICE_NAME: ${SERVICE_NAME}"
-          echo "IMAGE_URL: ${IMAGE_URL}"
-
-          # Validate required values
-          if [ -z "${IMAGE_URL}" ]; then
-            echo "❌ ERROR: IMAGE_URL is empty!"
-            echo "Environment variable IMAGE_URL: ${IMAGE_URL}"
-            exit 1
-          fi
+          echo "Deploying from source (no registry permission needed)..."
 
           gcloud run deploy ${SERVICE_NAME} \
-            --image="${IMAGE_URL}" \
+            --source=. \
             --platform=managed \
             --region=${{ env.GCP_REGION }} \
             --allow-unauthenticated \
@@ -505,7 +405,7 @@ jobs:
             ## 🚀 Production Deployment
 
             **Service:** ${{ needs.determine-environment.outputs.service_name }}
-            **Image:** ${{ env.IMAGE_URL }}
+            **Build Method:** Source deployment (no image registry)
             **URL:** ${{ steps.deploy.outputs.url }}
             **Commit:** ${{ github.sha }}
 
@@ -531,7 +431,7 @@ jobs:
 
             **Environment:** Production
             **Service:** ${{ needs.determine-environment.outputs.service_name }}
-            **Image:** ${{ env.IMAGE_URL }}
+            **Build Method:** Source deployment (no image registry)
             **URL:** ${{ steps.deploy.outputs.url }}
             **Status:** ${{ job.status == 'success' && '✅ Deployed Successfully' || '❌ Deployment Failed' }}
             **Branch:** ${{ github.ref_name }}
