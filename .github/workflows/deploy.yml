@@ -144,35 +144,63 @@ jobs:
         uses: google-github-actions/setup-gcloud@v2
 
       - name: Create environment variables file
-        run: |
-          cat > .env.staging << EOF
-          ENVIRONMENT: staging
+        env:
           FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
           FIREBASE_DATABASE_ID: ${{ secrets.STAGING_FIREBASE_DATABASE_ID || secrets.FIREBASE_DATABASE_ID }}
           GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
           GCS_BUCKET_NAME: ${{ secrets.STAGING_GCS_BUCKET_NAME || secrets.GCS_BUCKET_NAME }}
           JWT_SECRET_KEY: ${{ secrets.JWT_SECRET_KEY }}
-          JWT_ALGORITHM: HS256
-          ACCESS_TOKEN_EXPIRE_MINUTES: 30
-          SESSION_DURATION_HOURS: 2
-          REFRESH_SESSION_DURATION_DAYS: 7
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           OPENAI_MODEL: ${{ secrets.OPENAI_MODEL || 'gpt-5-mini' }}
-          OPENAI_MAX_TOKENS: 4000
-          OPENAI_TEMPERATURE: 0.0
           LLAMAPARSE_API_KEY: ${{ secrets.LLAMAPARSE_API_KEY }}
           PINECONE_API_KEY: ${{ secrets.PINECONE_API_KEY }}
           PINECONE_ENVIRONMENT: ${{ secrets.PINECONE_ENVIRONMENT }}
           PINECONE_INDEX_NAME: ${{ secrets.PINECONE_INDEX_NAME || 'document-intelligence' }}
-          PRODUCTION_CORS_ORIGINS: ${{ secrets.STAGING_CORS_ORIGINS || '["http://localhost:3000"]' }}
+          STAGING_CORS_ORIGINS: ${{ secrets.STAGING_CORS_ORIGINS || '["http://localhost:3000"]' }}
           FRONTEND_DOMAIN: ${{ secrets.FRONTEND_DOMAIN || 'localhost' }}
-          MAX_FILE_SIZE: 52428800
-          ALLOWED_FILE_TYPES: '["pdf", "xlsx"]'
-          SIGNED_URL_EXPIRATION_MINUTES: 60
-          LOG_LEVEL: INFO
-          LOG_FORMAT: json
-          DEBUG: false
-          EOF
+        run: |
+          python3 << 'PYTHON_SCRIPT'
+          import os
+          
+          env_vars = {
+              "ENVIRONMENT": "staging",
+              "FIREBASE_PROJECT_ID": os.environ.get("FIREBASE_PROJECT_ID", ""),
+              "FIREBASE_DATABASE_ID": os.environ.get("FIREBASE_DATABASE_ID", ""),
+              "GCP_PROJECT_ID": os.environ.get("GCP_PROJECT_ID", ""),
+              "GCS_BUCKET_NAME": os.environ.get("GCS_BUCKET_NAME", ""),
+              "JWT_SECRET_KEY": os.environ.get("JWT_SECRET_KEY", ""),
+              "JWT_ALGORITHM": "HS256",
+              "ACCESS_TOKEN_EXPIRE_MINUTES": "30",
+              "SESSION_DURATION_HOURS": "2",
+              "REFRESH_SESSION_DURATION_DAYS": "7",
+              "OPENAI_API_KEY": os.environ.get("OPENAI_API_KEY", ""),
+              "OPENAI_MODEL": os.environ.get("OPENAI_MODEL", "gpt-5-mini"),
+              "OPENAI_MAX_TOKENS": "4000",
+              "OPENAI_TEMPERATURE": "0.0",
+              "LLAMAPARSE_API_KEY": os.environ.get("LLAMAPARSE_API_KEY", ""),
+              "PINECONE_API_KEY": os.environ.get("PINECONE_API_KEY", ""),
+              "PINECONE_ENVIRONMENT": os.environ.get("PINECONE_ENVIRONMENT", ""),
+              "PINECONE_INDEX_NAME": os.environ.get("PINECONE_INDEX_NAME", "document-intelligence"),
+              "PRODUCTION_CORS_ORIGINS": os.environ.get("STAGING_CORS_ORIGINS", '["http://localhost:3000"]'),
+              "FRONTEND_DOMAIN": os.environ.get("FRONTEND_DOMAIN", "localhost"),
+              "MAX_FILE_SIZE": "52428800",
+              "ALLOWED_FILE_TYPES": '["pdf", "xlsx"]',
+              "SIGNED_URL_EXPIRATION_MINUTES": "60",
+              "LOG_LEVEL": "INFO",
+              "LOG_FORMAT": "json",
+              "DEBUG": "false"
+          }
+          
+          # Ensure all values are strings and write YAML with all values quoted
+          env_vars = {k: str(v) for k, v in env_vars.items()}
+          
+          # Write YAML ensuring all values are quoted strings
+          with open("env.staging.yaml", "w") as f:
+              for key, value in env_vars.items():
+                  # Escape quotes in values and ensure proper YAML string format
+                  escaped_value = str(value).replace('"', '\\"')
+                  f.write(f'{key}: "{escaped_value}"\n')
+          PYTHON_SCRIPT
 
       - name: Deploy to Cloud Run (Staging)
         id: deploy
@@ -191,7 +219,7 @@ jobs:
             --concurrency=80 \
             --max-instances=10 \
             --timeout=300 \
-            --env-vars-file=.env.staging \
+            --env-vars-file=env.staging.yaml \
             --project="${PROJECT_ID}"
 
           # Get service URL
@@ -272,35 +300,63 @@ jobs:
         uses: google-github-actions/setup-gcloud@v2
 
       - name: Create environment variables file
-        run: |
-          cat > .env.production << EOF
-          ENVIRONMENT: production
+        env:
           FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
           FIREBASE_DATABASE_ID: ${{ secrets.FIREBASE_DATABASE_ID }}
           GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
           GCS_BUCKET_NAME: ${{ secrets.GCS_BUCKET_NAME }}
           JWT_SECRET_KEY: ${{ secrets.JWT_SECRET_KEY }}
-          JWT_ALGORITHM: HS256
-          ACCESS_TOKEN_EXPIRE_MINUTES: 30
-          SESSION_DURATION_HOURS: 2
-          REFRESH_SESSION_DURATION_DAYS: 7
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           OPENAI_MODEL: ${{ secrets.OPENAI_MODEL || 'gpt-5-mini' }}
-          OPENAI_MAX_TOKENS: 4000
-          OPENAI_TEMPERATURE: 0.0
           LLAMAPARSE_API_KEY: ${{ secrets.LLAMAPARSE_API_KEY }}
           PINECONE_API_KEY: ${{ secrets.PINECONE_API_KEY }}
           PINECONE_ENVIRONMENT: ${{ secrets.PINECONE_ENVIRONMENT }}
           PINECONE_INDEX_NAME: ${{ secrets.PINECONE_INDEX_NAME || 'document-intelligence' }}
           PRODUCTION_CORS_ORIGINS: ${{ secrets.PRODUCTION_CORS_ORIGINS }}
           FRONTEND_DOMAIN: ${{ secrets.FRONTEND_DOMAIN }}
-          MAX_FILE_SIZE: 52428800
-          ALLOWED_FILE_TYPES: '["pdf", "xlsx"]'
-          SIGNED_URL_EXPIRATION_MINUTES: 60
-          LOG_LEVEL: INFO
-          LOG_FORMAT: json
-          DEBUG: false
-          EOF
+        run: |
+          python3 << 'PYTHON_SCRIPT'
+          import os
+          
+          env_vars = {
+              "ENVIRONMENT": "production",
+              "FIREBASE_PROJECT_ID": os.environ.get("FIREBASE_PROJECT_ID", ""),
+              "FIREBASE_DATABASE_ID": os.environ.get("FIREBASE_DATABASE_ID", ""),
+              "GCP_PROJECT_ID": os.environ.get("GCP_PROJECT_ID", ""),
+              "GCS_BUCKET_NAME": os.environ.get("GCS_BUCKET_NAME", ""),
+              "JWT_SECRET_KEY": os.environ.get("JWT_SECRET_KEY", ""),
+              "JWT_ALGORITHM": "HS256",
+              "ACCESS_TOKEN_EXPIRE_MINUTES": "30",
+              "SESSION_DURATION_HOURS": "2",
+              "REFRESH_SESSION_DURATION_DAYS": "7",
+              "OPENAI_API_KEY": os.environ.get("OPENAI_API_KEY", ""),
+              "OPENAI_MODEL": os.environ.get("OPENAI_MODEL", "gpt-5-mini"),
+              "OPENAI_MAX_TOKENS": "4000",
+              "OPENAI_TEMPERATURE": "0.0",
+              "LLAMAPARSE_API_KEY": os.environ.get("LLAMAPARSE_API_KEY", ""),
+              "PINECONE_API_KEY": os.environ.get("PINECONE_API_KEY", ""),
+              "PINECONE_ENVIRONMENT": os.environ.get("PINECONE_ENVIRONMENT", ""),
+              "PINECONE_INDEX_NAME": os.environ.get("PINECONE_INDEX_NAME", "document-intelligence"),
+              "PRODUCTION_CORS_ORIGINS": os.environ.get("PRODUCTION_CORS_ORIGINS", ""),
+              "FRONTEND_DOMAIN": os.environ.get("FRONTEND_DOMAIN", ""),
+              "MAX_FILE_SIZE": "52428800",
+              "ALLOWED_FILE_TYPES": '["pdf", "xlsx"]',
+              "SIGNED_URL_EXPIRATION_MINUTES": "60",
+              "LOG_LEVEL": "INFO",
+              "LOG_FORMAT": "json",
+              "DEBUG": "false"
+          }
+          
+          # Ensure all values are strings and write YAML with all values quoted
+          env_vars = {k: str(v) for k, v in env_vars.items()}
+          
+          # Write YAML ensuring all values are quoted strings
+          with open("env.production.yaml", "w") as f:
+              for key, value in env_vars.items():
+                  # Escape quotes in values and ensure proper YAML string format
+                  escaped_value = str(value).replace('"', '\\"')
+                  f.write(f'{key}: "{escaped_value}"\n')
+          PYTHON_SCRIPT
 
       - name: Deploy to Cloud Run (Production)
         id: deploy
@@ -319,7 +375,7 @@ jobs:
             --concurrency=80 \
             --max-instances=10 \
             --timeout=300 \
-            --env-vars-file=.env.production \
+            --env-vars-file=env.production.yaml \
             --project="${PROJECT_ID}"
 
           # Get service URL
