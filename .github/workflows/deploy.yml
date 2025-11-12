@@ -97,6 +97,8 @@ jobs:
       - name: Build and push Docker image
         id: build
         run: |
+          set -e  # Exit immediately on error
+
           PROJECT_ID="${{ secrets.GCP_PROJECT_ID }}"
           IMAGE_TAG="${{ needs.determine-environment.outputs.image_tag }}"
           ENVIRONMENT="${{ needs.determine-environment.outputs.environment }}"
@@ -108,12 +110,20 @@ jobs:
 
           # Build image using Cloud Build for consistency with existing setup
           # Using regional user-owned bucket for logs (2025 best practice)
-          gcloud builds submit \
+          gcloud builds submit . \
             --tag="${IMAGE_URL}" \
             --timeout=20m \
             --machine-type=e2-highcpu-8 \
             --project="${PROJECT_ID}" \
             --default-buckets-behavior=REGIONAL_USER_OWNED_BUCKET
+
+          # Verify image was created successfully
+          echo "Verifying image was created..."
+          gcloud container images describe "${IMAGE_URL}" --project="${PROJECT_ID}" || {
+            echo "❌ ERROR: Image was not created successfully"
+            exit 1
+          }
+          echo "✅ Image verified successfully"
 
           # Also tag as latest for the environment (skip if permissions issue)
           gcloud container images add-tag "${IMAGE_URL}" "${IMAGE_NAME}:${ENVIRONMENT}-latest" --quiet || echo "⚠️  Skipping tag creation (non-blocking)"
