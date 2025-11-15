@@ -82,7 +82,7 @@ The document processing system uses a **Facade Pattern** with 7 specialized serv
 - **File Storage**: Google Cloud Storage with signed URLs and CORS configuration
 - **Authentication**: **Session-based JWT** with automatic refresh token rotation
 - **Dependency Management**: **uv** (ultra-fast Python package installer - 10-100x faster than pip)
-- **Deployment**: Google Cloud Run with **GitHub Actions CI/CD** (automated staging/production) or manual deployment via Cloud Build
+- **Deployment**: Google Cloud Run with manual deployment scripts (Python, Bash, or Cloud Build)
 
 ### **AI & LLM Integration**
 - **Language Models**: OpenAI GPT-5-mini (configurable) via OpenAI 1.86.0
@@ -793,232 +793,938 @@ asyncio.run(test())
 
 ## ☁️ Cloud Run Deployment
 
-### 🚀 Option 1: GitHub Actions CI/CD (Recommended)
+This section provides comprehensive instructions for deploying the Document Intelligence API to Google Cloud Run using manual deployment methods.
 
-**Automated deployment with staging and production environments.**
+### 📋 Prerequisites
 
-The project includes comprehensive GitHub Actions workflows for automated CI/CD:
+Before deploying, ensure you have:
 
-#### Features
-- ✅ **Automatic CI checks** on all pull requests
-- ✅ **Auto-deploy to staging** from `develop` branch
-- ✅ **Production deployment** from `main` branch with manual approval
-- ✅ **Health checks** and automatic rollback on failure
-- ✅ **Security scanning** and code quality checks
+1. **Google Cloud Project Setup**:
+   ```bash
+   # Install gcloud CLI (if not already installed)
+   # Visit: https://cloud.google.com/sdk/docs/install
 
-#### Quick Setup
+   # Login and set project
+   gcloud auth login
+   gcloud config set project YOUR_PROJECT_ID
 
-**1. Complete GCP Service Account Setup:**
+   # Enable required APIs
+   gcloud services enable run.googleapis.com
+   gcloud services enable cloudbuild.googleapis.com
+   gcloud services enable firestore.googleapis.com
+   gcloud services enable storage.googleapis.com
+   gcloud services enable artifactregistry.googleapis.com
+   ```
 
-Follow the detailed guide: `GCP_SERVICE_ACCOUNT_SETUP.md`
+2. **Local Tools Installed**:
+   - `gcloud` CLI (authenticated)
+   - `docker` (for building containers)
+   - `python` 3.12+ (for Python deployment script)
+   - `uv` (optional, for dependency management)
 
-```bash
-# Quick setup script included in the guide
-# Creates service account with required permissions
-# Generates and downloads JSON key file
-```
+3. **Application Default Credentials**:
+   ```bash
+   gcloud auth application-default login
+   ```
 
-**2. Configure GitHub Secrets:**
+4. **GCP Resources Created**:
+   - **Named Firestore Database**: Create via Firebase Console (e.g., `biz2bricks-dev-v1-docdb-v1`)
+   - **GCS Bucket**: For document storage (e.g., `biz2bricks-dev-v1-document-store`)
+   - **Service Account** (optional): For Cloud Run identity with appropriate IAM roles
 
-Go to **Repository Settings > Secrets and variables > Actions** and add:
+### 🚀 Deployment Methods
 
-```
-# GCP Authentication
-GCP_SA_KEY                    # Base64-encoded service account JSON key
-GCP_PROJECT_ID                # biz2bricksv1
-GCP_REGION                    # us-central1
-
-# Firebase/Firestore
-FIREBASE_PROJECT_ID           # biz2bricksv1
-FIREBASE_DATABASE_ID          # biz2bricks-docdb-v1
-GCS_BUCKET_NAME               # biz2bricksv1-document-store
-
-# Security
-JWT_SECRET_KEY                # Strong 256-bit secret (use: openssl rand -base64 32)
-
-# AI Services
-OPENAI_API_KEY                # OpenAI API key
-OPENAI_MODEL                  # gpt-5-mini (optional)
-LLAMAPARSE_API_KEY            # LlamaParse API key
-PINECONE_API_KEY              # Pinecone API key
-PINECONE_ENVIRONMENT          # Pinecone environment
-
-# CORS
-PRODUCTION_CORS_ORIGINS       # JSON array: ["https://yourdomain.com"]
-FRONTEND_DOMAIN               # biztobricks.com
-
-# Optional: Staging-specific overrides
-STAGING_FIREBASE_DATABASE_ID  # Separate staging database (if different)
-STAGING_GCS_BUCKET_NAME       # Separate staging bucket (if different)
-STAGING_CORS_ORIGINS          # Staging frontend URLs
-```
-
-**3. Setup GitHub Environments:**
-
-**Staging:**
-- Go to **Settings > Environments** → **New environment**
-- Name: `staging`
-- No protection rules (auto-deploy)
-
-**Production:**
-- Name: `production`
-- Protection rules:
-  - ✅ Required reviewers: Add 1+ reviewers
-  - ✅ Deployment branches: Only `main`
-
-**4. Deploy:**
-
-```bash
-# Test CI on a feature branch
-git checkout -b feature/my-feature
-git push origin feature/my-feature
-# Open PR → CI runs automatically
-
-# Deploy to staging
-git checkout develop
-git merge feature/my-feature
-git push origin develop
-# ✅ Automatic deployment to staging
-
-# Deploy to production
-git checkout main
-git merge develop
-git push origin main
-# ⏳ Wait for manual approval
-# ✅ Production deployment
-```
-
-#### Workflow Details
-
-**CI Workflow** (runs on all PRs):
-- Code formatting (Black) and linting (Ruff)
-- Type checking (MyPy)
-- Tests with pytest and coverage
-- Security scanning
-- Docker build validation
-
-**CD Workflow**:
-- **Staging**: Auto-deploy from `develop` → `document-intelligence-api-staging`
-- **Production**: Manual approval from `main` → `document-intelligence-api`
-- Automatic health checks and rollback
-- GitHub release creation
-
-**Monitoring:**
-```bash
-# View workflows in GitHub Actions tab
-
-# Check deployment status
-gcloud run services describe document-intelligence-api \
-  --region=us-central1 --format="value(status.url)"
-
-# View logs
-gcloud run services logs read document-intelligence-api \
-  --region=us-central1 --limit=50
-```
-
-**Detailed Documentation:**
-- Full workflow docs: `.github/workflows/README.md`
-- GCP setup guide: `GCP_SERVICE_ACCOUNT_SETUP.md`
-- Environment templates: `.github/env/`
+The project provides **three manual deployment methods**. Choose the one that best fits your workflow:
 
 ---
 
-### 🛠️ Option 2: Manual Deployment
+#### **Method 1: Complete Infrastructure Setup** (⭐ Recommended for First Deployment)
 
-#### Prerequisites
+The `deploy_full.sh` script is the **ONLY true "one-stop" solution** that creates ALL required GCP resources from scratch.
 
-- `gcloud`, `docker`, and `uv` installed locally
-- Authenticated to the target project: `gcloud auth login && gcloud config set project <PROJECT_ID>`
-- Application Default Credentials if running from a workstation: `gcloud auth application-default login`
-- A named Firestore database (for example `biz2bricks-docdb-v1`) and a GCS bucket (for example `biz2bricksv1-document-store`)
+**🏗️ Infrastructure Creation (Unique to this method):**
+- ✅ **Creates GCS bucket** with versioning and lifecycle policies
+- ✅ **Creates service account** with automatic detection/reuse
+- ✅ **Configures comprehensive IAM permissions** (6 roles):
+  - `roles/run.invoker` - Allow service invocation
+  - `roles/datastore.user` - Firestore database access
+  - `roles/storage.objectAdmin` - GCS bucket full access
+  - `roles/logging.logWriter` - Cloud Logging access
+  - `roles/cloudtrace.agent` - Cloud Trace access
+  - `roles/iam.serviceAccountUser` - Service account usage
 
-#### Unified Deployment Script (Recommended)
+**🚀 Deployment Features:**
+- ✅ Automatically enables required GCP APIs
+- ✅ Loads environment variables from YAML or KEY=VALUE files
+- ✅ Builds and pushes Docker images (both `latest` and timestamped tags)
+- ✅ Deploys to Cloud Run with configurable resource limits
+- ✅ Deploys Firestore composite indexes
+- ✅ Runs post-deployment health checks with retries
+- ✅ **Idempotent** - safe to run multiple times (reuses existing resources)
 
-The repository ships with `deploy_full.sh`, a one-stop deployment workflow that:
+**Best for:** First-time deployment, setting up new environments, complete infrastructure provisioning
 
-- Enables required APIs (`run`, `cloudbuild`, `firestore`, `storage`, `iam`)
-- Reuses or creates a Cloud Run service account and applies IAM bindings
-- Confirms or creates the target GCS bucket with lifecycle/ACL configuration
-- Loads environment variables from a YAML/KEY=VALUE file and writes a temporary `--env-vars-file`
-- Builds and pushes both `latest` and timestamped docker tags to Container Registry
-- Deploys/updates the Cloud Run service and runs a health probe
-- Optionally seeds Firestore composite indexes via the helper scripts
+---
 
-Typical usage:
+#### **📖 Complete deploy_full.sh Documentation**
+
+##### **What Happens During Deployment**
+
+The `deploy_full.sh` script executes a comprehensive 12-step deployment workflow:
+
+**Phase 1: Prerequisites & Validation**
+1. **Verify Required Tools** - Checks for `gcloud`, `docker`, and `python3`
+2. **Validate Project Files** - Ensures `Dockerfile`, `pyproject.toml` exist
+3. **Check Authentication** - Verifies active gcloud authentication
+4. **Set Active Project** - Configures gcloud to use specified project ID
+5. **Configure Docker Auth** - Sets up authentication for pushing to GCR
+
+**Phase 2: GCP API Enablement**
+6. **Enable Required APIs** (automatically):
+   - `run.googleapis.com` - Cloud Run
+   - `cloudbuild.googleapis.com` - Container building
+   - `containerregistry.googleapis.com` - Image storage
+   - `iam.googleapis.com` - Identity & Access Management
+   - `firestore.googleapis.com` - Firestore database
+   - `storage-component.googleapis.com` - Cloud Storage
+
+**Phase 3: Infrastructure Setup**
+7. **Service Account Management**:
+   - Detects existing service account from current Cloud Run service (if exists)
+   - Falls back to first available service account in project
+   - Creates new service account `document-int-run@PROJECT.iam.gserviceaccount.com` if none exist
+   - Grants `roles/iam.serviceAccountUser` to current gcloud user
+
+8. **IAM Role Binding** - Grants 5 essential roles to service account:
+   - `roles/run.invoker` - Invoke Cloud Run services
+   - `roles/datastore.user` - Read/write Firestore data
+   - `roles/storage.objectAdmin` - Full GCS bucket access
+   - `roles/logging.logWriter` - Write application logs
+   - `roles/cloudtrace.agent` - Send trace data
+
+9. **GCS Bucket Creation**:
+   - Checks if bucket exists (idempotent)
+   - Creates bucket with `--uniform-bucket-level-access`
+   - Enables versioning on bucket
+   - Configures lifecycle policy (keep last 5 versions, delete older)
+   - Uses default name: `{project-id}-document-intelligence` if not specified
+
+**Phase 4: Environment Configuration**
+10. **Parse Environment File**:
+    - Reads YAML or KEY=VALUE format files
+    - Supports both `:` and `=` separators
+    - Handles quoted strings and complex values
+    - Sets default values for critical variables
+    - Creates temporary `.env` file for Cloud Run deployment
+
+**Phase 5: Firestore Indexes**
+11. **Deploy Firestore Indexes** (if `--skip-indexes` not set):
+    - Attempts `deploy_firestore_indexes.py --method firebase` first
+    - Falls back to `--method gcloud` if Firebase CLI fails
+    - Falls back to `create_firestore_indexes.py` if automated deployment fails
+    - Non-blocking - continues deployment even if index creation fails
+
+**Phase 6: Build & Deploy**
+12. **Build Docker Image**:
+    - Builds for `linux/amd64` platform (Cloud Run compatible)
+    - Tags with both `:latest` and `:timestamp` for rollback capability
+    - Pushes both tags to Google Container Registry
+
+13. **Deploy to Cloud Run**:
+    - Creates or updates Cloud Run service
+    - Attaches service account
+    - Configures resource limits (memory, CPU, concurrency, max instances)
+    - Sets timeout for long-running requests
+    - Loads all environment variables from temporary file
+    - Configures `--allow-unauthenticated` for public access
+
+**Phase 7: Verification & Cleanup**
+14. **Health Check** - Tests `/health` endpoint with retries (3 attempts)
+15. **Display Results** - Shows service URL and next steps
+16. **Cleanup** - Removes temporary environment file
+
+---
+
+##### **Command-Line Options Reference**
 
 ```bash
-chmod +x deploy_full.sh                      # one time
-./deploy_full.sh \
-  --project-id biz2bricksv1 \
-  --region us-central1 \
-  --env-file production-env.yaml \
-  --bucket biz2bricksv1-document-store
+./deploy_full.sh [OPTIONS]
 ```
 
-Useful flags:
-- `--service-account <email>` to pin a specific deployment/runtime identity
-- `--bucket <name>` to supply a pre-created bucket (script verifies instead of recreating)
-- `--skip-indexes` to speed up subsequent redeploys once Firestore indexes exist
-- `--memory`, `--cpu`, `--concurrency`, `--max-instances`, `--timeout` to override defaults
+| Option | Required | Default | Description |
+|--------|----------|---------|-------------|
+| `--project-id` | **Yes** | - | Google Cloud project ID for deployment |
+| `--region` | No | `us-central1` | Cloud Run region (e.g., `us-west1`, `europe-west1`) |
+| `--service-name` | No | `document-intelligence-api` | Name of the Cloud Run service |
+| `--env-file` | No | `production-env.yaml` | Path to environment configuration file (YAML or KEY=VALUE) |
+| `--service-account` | No | Auto-detect | Service account email for Cloud Run runtime identity |
+| `--bucket` | No | From env file or auto-generated | GCS bucket name (format: `project-id-document-intelligence`) |
+| `--memory` | No | `1Gi` | Memory allocation (e.g., `512Mi`, `2Gi`, `4Gi`) |
+| `--cpu` | No | `1` | CPU allocation (e.g., `1`, `2`, `4`) |
+| `--concurrency` | No | `80` | Max concurrent requests per instance (1-1000) |
+| `--max-instances` | No | `10` | Maximum number of instances for autoscaling (1-1000) |
+| `--timeout` | No | `300` | Request timeout in seconds (max 3600) |
+| `--skip-indexes` | No | `false` | Skip Firestore index deployment (faster redeployments) |
 
-The script expects `FIREBASE_DATABASE_ID` inside your env file. For the default setup use:
+---
+
+##### **Prerequisites**
+
+Before running `deploy_full.sh`, ensure you have:
+
+**1. Local Tools Installed:**
+```bash
+# Check gcloud CLI
+gcloud --version  # Should be 400.0.0 or newer
+
+# Check Docker
+docker --version  # Should be 20.10 or newer
+
+# Check Python
+python3 --version  # Should be 3.12 or newer
+```
+
+**2. GCP Authentication:**
+```bash
+# Login to GCP
+gcloud auth login
+
+# Set up application default credentials
+gcloud auth application-default login
+
+# Verify authentication
+gcloud auth list
+```
+
+**3. Required Files in Repository:**
+- `Dockerfile` - Container image definition
+- `pyproject.toml` - Python project configuration
+- `uv.lock` - Dependency lock file (optional, warning if missing)
+- Environment file (e.g., `production-env.yaml`)
+
+**4. Firestore Database Created:**
+- Must be created manually via Firebase Console
+- Must be a **named database** (not `(default)`)
+- Note: Script does NOT create Firestore database
+
+**5. GCP Project Permissions:**
+Your gcloud account must have these roles:
+- `roles/run.admin` - Deploy Cloud Run services
+- `roles/iam.serviceAccountAdmin` - Create service accounts
+- `roles/iam.securityAdmin` - Grant IAM roles
+- `roles/storage.admin` - Create and manage GCS buckets
+- `roles/serviceusage.serviceUsageAdmin` - Enable APIs
+
+---
+
+##### **Step 1: Prepare Environment File**
+
+Create a `production-env.yaml` file with your configuration:
 
 ```yaml
-FIREBASE_DATABASE_ID: biz2bricks-docdb-v1
+# production-env.yaml
+ENVIRONMENT: production
+DEBUG: false
+LOG_LEVEL: INFO
+LOG_FORMAT: json
+
+# Google Cloud Configuration
+FIREBASE_PROJECT_ID: biz2bricks-dev-v1
+FIREBASE_DATABASE_ID: biz2bricks-dev-v1-docdb-v1
+GCP_PROJECT_ID: biz2bricks-dev-v1
+GCS_BUCKET_NAME: biz2bricks-dev-v1-document-store
+
+# Authentication & Security
+JWT_SECRET_KEY: your-production-secret-key-256-bit
+JWT_ALGORITHM: HS256
+ACCESS_TOKEN_EXPIRE_MINUTES: 30
+SESSION_DURATION_HOURS: 2
+REFRESH_SESSION_DURATION_DAYS: 7
+
+# AI Services (Required for AI features)
+OPENAI_API_KEY: sk-your-openai-api-key
+OPENAI_MODEL: gpt-4o-mini
+LLAMAPARSE_API_KEY: your-llamaparse-api-key
+
+# CORS Configuration
+PRODUCTION_CORS_ORIGINS: '["https://biztobricks.com","https://www.biztobricks.com"]'
+FRONTEND_DOMAIN: biztobricks.com
+
+# Document Processing
+MAX_FILE_SIZE: 52428800
+ALLOWED_FILE_TYPES: '["pdf", "xlsx", "xls", "csv"]'
+SIGNED_URL_EXPIRATION_MINUTES: 60
 ```
 
-### Alternative Paths
-
-- **Cloud Build**: `gcloud builds submit --config cloudbuild.yaml .`
-- **Python Automation**: `python deploy_to_cloudrun.py --project-id <PROJECT_ID>`
-- **Manual gcloud Flow**:
-  1. `docker build -t gcr.io/<PROJECT_ID>/document-intelligence-api .`
-  2. `docker push gcr.io/<PROJECT_ID>/document-intelligence-api`
-  3. `gcloud run deploy document-intelligence-api ... --set-env-vars ENVIRONMENT=production,FIREBASE_DATABASE_ID=biz2bricks-docdb-v1`
-
-### Post-Deployment Verification
+**Step 2: Run Deployment**
 
 ```bash
-# Fetch the live service URL
+# Make script executable (first time only)
+chmod +x deploy_full.sh
+
+# Deploy with all features
+./deploy_full.sh \
+  --project-id biz2bricks-dev-v1 \
+  --region us-central1 \
+  --env-file production-env.yaml \
+  --bucket biz2bricks-dev-v1-document-store
+
+# Deploy with custom resource limits
+./deploy_full.sh \
+  --project-id biz2bricks-dev-v1 \
+  --region us-central1 \
+  --env-file production-env.yaml \
+  --bucket biz2bricks-dev-v1-document-store \
+  --memory 2Gi \
+  --cpu 2 \
+  --max-instances 20 \
+  --concurrency 100
+
+# Skip index creation for faster redeployments
+./deploy_full.sh \
+  --project-id biz2bricks-dev-v1 \
+  --region us-central1 \
+  --env-file production-env.yaml \
+  --skip-indexes
+```
+
+---
+
+##### **Usage Examples**
+
+**Example 1: First-Time Deployment (Minimal)**
+```bash
+# Simplest deployment - creates everything with defaults
+./deploy_full.sh --project-id my-project-id
+```
+*Creates: service account, GCS bucket (`my-project-id-document-intelligence`), deploys with 1Gi/1CPU*
+
+**Example 2: Production Deployment (Full Configuration)**
+```bash
+# Production deployment with custom resources
+./deploy_full.sh \
+  --project-id biz2bricks-prod \
+  --region us-central1 \
+  --env-file production-env.yaml \
+  --bucket biz2bricks-prod-documents \
+  --memory 2Gi \
+  --cpu 2 \
+  --max-instances 50 \
+  --concurrency 100 \
+  --timeout 600
+```
+*Best for: High-traffic production environments with AI workloads*
+
+**Example 3: Multi-Region Deployment**
+```bash
+# Deploy to Europe region
+./deploy_full.sh \
+  --project-id my-project \
+  --region europe-west1 \
+  --env-file production-env.yaml \
+  --bucket my-project-eu-documents
+```
+*Note: Create separate buckets for each region for better performance*
+
+**Example 4: Development Environment**
+```bash
+# Dev deployment with lower resources
+./deploy_full.sh \
+  --project-id my-project-dev \
+  --region us-central1 \
+  --env-file development-env.yaml \
+  --memory 512Mi \
+  --cpu 1 \
+  --max-instances 3
+```
+*Saves costs in development environments*
+
+**Example 5: Rapid Redeploy (Code Changes Only)**
+```bash
+# Skip index deployment for faster updates
+./deploy_full.sh \
+  --project-id my-project \
+  --env-file production-env.yaml \
+  --skip-indexes
+```
+*Use this for subsequent deployments when only code has changed*
+
+**Example 6: Custom Service Account**
+```bash
+# Use specific service account
+./deploy_full.sh \
+  --project-id my-project \
+  --env-file production-env.yaml \
+  --service-account custom-sa@my-project.iam.gserviceaccount.com
+```
+*Useful when you've pre-configured a service account with specific permissions*
+
+---
+
+##### **What Gets Created (Resource Checklist)**
+
+When you run `deploy_full.sh` for the first time, these resources are created:
+
+| Resource | Name Format | Description | Cost Impact |
+|----------|-------------|-------------|-------------|
+| **Service Account** | `document-int-run@{project}.iam.gserviceaccount.com` | Identity for Cloud Run service | Free |
+| **IAM Role Bindings** | 6 roles (run.invoker, datastore.user, etc.) | Permissions for service account | Free |
+| **GCS Bucket** | `{project-id}-document-intelligence` or custom | Document storage with versioning | Pay per GB stored |
+| **Docker Images** | `gcr.io/{project}/{service}:latest` & `:timestamp` | Container images in GCR | Pay per GB stored |
+| **Cloud Run Service** | `document-intelligence-api` or custom | Serverless compute service | Pay per request |
+| **Environment Variables** | Set via `--env-file` | Configuration loaded into Cloud Run | Free |
+| **Firestore Indexes** | Composite indexes for queries | Required for complex queries | Free |
+
+**Not Created (Must Exist Before Deployment):**
+- ❌ Firestore Database - Create manually via Firebase Console
+- ❌ GCP Project - Create via Cloud Console
+- ❌ Firebase Configuration - Set up via Firebase Console
+
+---
+
+##### **Deployment Output Explained**
+
+When running `deploy_full.sh`, you'll see output like this:
+
+```bash
+ℹ️  Setting active GCP project to biz2bricks-dev-v1
+ℹ️  Checking required APIs
+✅ API enabled: run.googleapis.com
+✅ API enabled: cloudbuild.googleapis.com
+ℹ️  Attempting to detect existing Cloud Run service for service account reuse
+⚠️  No service account provided or detected. Defaulting to new account document-int-run@biz2bricks-dev-v1.iam.gserviceaccount.com
+✅ Service account created: document-int-run@biz2bricks-dev-v1.iam.gserviceaccount.com
+ℹ️  Granting required project roles to document-int-run@biz2bricks-dev-v1.iam.gserviceaccount.com
+✅ Role granted: roles/run.invoker
+✅ Role granted: roles/datastore.user
+ℹ️  GCS bucket exists: gs://biz2bricks-dev-v1-document-store
+ℹ️  Deploying Firestore indexes via deploy_firestore_indexes.py
+ℹ️  Building Docker image for Cloud Run (linux/amd64)
+✅ Docker image built
+ℹ️  Pushing image: gcr.io/biz2bricks-dev-v1/document-intelligence-api:latest
+✅ Docker images pushed to Container Registry
+ℹ️  Deploying Cloud Run service: document-intelligence-api
+✅ Cloud Run service deployed successfully
+✅ Service URL: https://document-intelligence-api-abc123-uc.a.run.app
+ℹ️  Testing health endpoint...
+✅ Health check passed: {"status":"healthy"}
+✅ Deployment complete!
+
+Next steps:
+ - Review logs: gcloud run services logs tail document-intelligence-api --region=us-central1
+ - Validate Firestore indexes if any warnings were emitted
+ - Update frontend or clients to use: https://document-intelligence-api-abc123-uc.a.run.app
+```
+
+**Key Indicators:**
+- ✅ Green checkmark = Success
+- ℹ️  Blue info = Informational
+- ⚠️  Yellow warning = Non-critical issue (deployment continues)
+- ❌ Red X = Critical error (deployment stops)
+
+---
+
+##### **Troubleshooting deploy_full.sh**
+
+**Problem: "No active gcloud account detected"**
+```bash
+# Solution: Login to gcloud
+gcloud auth login
+gcloud auth application-default login
+```
+
+**Problem: "Permission denied" when creating service account**
+```bash
+# Solution: Grant yourself required roles
+gcloud projects add-iam-policy-binding PROJECT_ID \
+  --member="user:YOUR_EMAIL" \
+  --role="roles/iam.serviceAccountAdmin"
+
+gcloud projects add-iam-policy-binding PROJECT_ID \
+  --member="user:YOUR_EMAIL" \
+  --role="roles/iam.securityAdmin"
+```
+
+**Problem: "Failed to create GCS bucket - name already taken"**
+```bash
+# Solution: Bucket names are globally unique, use a custom name
+./deploy_full.sh \
+  --project-id my-project \
+  --bucket my-unique-bucket-name-12345
+```
+
+**Problem: "Dockerfile not found"**
+```bash
+# Solution: Run script from repository root
+cd /path/to/doc_intelligence_backend_api_v2.0
+./deploy_full.sh --project-id my-project
+```
+
+**Problem: "API not enabled" errors**
+```bash
+# Solution: Script auto-enables APIs, but if you see this error:
+gcloud services enable run.googleapis.com \
+  cloudbuild.googleapis.com \
+  containerregistry.googleapis.com \
+  iam.googleapis.com \
+  firestore.googleapis.com \
+  storage-component.googleapis.com
+```
+
+**Problem: "Health check failed" after deployment**
+```bash
+# Solution: Check logs for startup errors
+gcloud run services logs read document-intelligence-api \
+  --region us-central1 \
+  --limit 100
+
+# Common causes:
+# 1. Missing environment variables (check production-env.yaml)
+# 2. Firestore database not created
+# 3. Invalid API keys (OPENAI_API_KEY, JWT_SECRET_KEY)
+```
+
+**Problem: Deployment is very slow**
+```bash
+# Solution: Skip index deployment for faster subsequent deploys
+./deploy_full.sh \
+  --project-id my-project \
+  --env-file production-env.yaml \
+  --skip-indexes
+```
+
+**Problem: "Docker push failed - unauthorized"**
+```bash
+# Solution: Reconfigure Docker authentication
+gcloud auth configure-docker
+
+# Or login to Docker manually
+docker login -u oauth2accesstoken -p "$(gcloud auth print-access-token)" gcr.io
+```
+
+**Problem: Out of memory errors in Cloud Run**
+```bash
+# Solution: Increase memory allocation
+./deploy_full.sh \
+  --project-id my-project \
+  --memory 2Gi \
+  --timeout 600  # Also increase timeout for AI operations
+```
+
+---
+
+##### **Idempotency & Safe Redeployment**
+
+The `deploy_full.sh` script is **idempotent** - you can run it multiple times safely:
+
+- ✅ **Service Account**: Detects and reuses existing accounts
+- ✅ **IAM Roles**: Re-granting roles is safe (no duplicates)
+- ✅ **GCS Bucket**: Checks existence before creating
+- ✅ **APIs**: Re-enabling already enabled APIs is safe
+- ✅ **Cloud Run Service**: Updates existing service instead of failing
+- ✅ **Docker Images**: New timestamp tag created each time, `:latest` updated
+
+**Safe to Run Multiple Times:**
+```bash
+# Run this 5 times - same result every time
+./deploy_full.sh --project-id my-project --env-file production-env.yaml
+```
+
+**What Changes Each Time:**
+- New Docker image with timestamp tag (e.g., `:1699564823`)
+- Cloud Run service updated to latest code
+- Environment variables refreshed from file
+- Health check performed on new deployment
+
+**What Stays the Same:**
+- Service account (reused)
+- GCS bucket (not recreated)
+- IAM permissions (not duplicated)
+- Firestore indexes (if `--skip-indexes` used)
+
+---
+
+#### **Method 2: Cloud Build Manual Trigger**
+
+The `cloudbuild.yaml` provides a simple configuration for building and deploying via Cloud Build.
+
+**Features:**
+- ✅ Uses Cloud Build for building Docker images
+- ✅ Pushes to Google Container Registry (GCR)
+- ✅ Deploys to Cloud Run with configurable substitutions
+- ⚠️ **Note**: Does NOT include API keys in the build config (must be set separately)
+
+**Step 1: Review cloudbuild.yaml**
+
+The configuration includes default substitutions that you can override:
+
+```yaml
+substitutions:
+  _REGION: 'us-central1'
+  _SERVICE_NAME: 'document-intelligence-api'
+  _ENVIRONMENT: 'production'
+  _GCP_PROJECT_ID: 'biz2bricks-dev-v1'
+  _FIREBASE_DATABASE_ID: 'biz2bricks-dev-v1-docdb-v1'
+  _GCS_BUCKET_NAME: 'biz2bricks-dev-v1-document-store'
+  _MEMORY: '1Gi'
+  _CPU: '1'
+  _CONCURRENCY: '80'
+  _MAX_INSTANCES: '10'
+```
+
+**Step 2: Deploy with Cloud Build**
+
+```bash
+# Deploy with default substitutions
+gcloud builds submit --config cloudbuild.yaml .
+
+# Deploy with custom substitutions
+gcloud builds submit --config cloudbuild.yaml \
+  --substitutions=_MEMORY=2Gi,_CPU=2,_MAX_INSTANCES=20 \
+  .
+```
+
+**Step 3: Set API Keys Separately**
+
+Since `cloudbuild.yaml` doesn't include sensitive API keys, set them manually:
+
+```bash
+gcloud run services update document-intelligence-api \
+  --region us-central1 \
+  --update-env-vars="OPENAI_API_KEY=sk-your-key,LLAMAPARSE_API_KEY=your-key,JWT_SECRET_KEY=your-secret"
+```
+
+---
+
+### 📊 Deployment Methods Comparison
+
+Use this table to understand what each deployment method creates and when to use it:
+
+| Feature | deploy_full.sh | cloudbuild.yaml |
+|---------|----------------|-----------------|
+| **Infrastructure Creation** |
+| Creates GCS Bucket | ✅ Yes | ❌ No |
+| Creates Service Account | ✅ Yes | ❌ No |
+| Configures IAM Permissions | ✅ Yes (6 roles) | ❌ No |
+| Creates Firestore Database | ⚠️ Manual* | ⚠️ Manual* |
+| **Deployment Features** |
+| Enables GCP APIs | ✅ Yes | ⚠️ Partial |
+| Builds Docker Image | ✅ Yes | ✅ Yes |
+| Pushes to Registry | ✅ Yes | ✅ Yes |
+| Deploys to Cloud Run | ✅ Yes | ✅ Yes |
+| Deploys Firestore Indexes | ✅ Yes | ❌ No |
+| **Configuration** |
+| Environment Management | Good | Basic |
+| .env File Support | ✅ YAML | ⚠️ Substitutions only |
+| API Key Handling | ✅ Automated | ⚠️ Manual setup required |
+| Health Checks | ✅ With retries | ❌ No |
+| **Best Use Case** | Full deployment | Quick manual builds |
+| **Lines of Code** | 542 | 90 |
+
+*Firestore database must be created manually via Firebase Console before running any deployment script.
+
+---
+
+### 🎯 When to Use Each Deployment Method
+
+#### **Use `deploy_full.sh` When:**
+- ✅ **First-time deployment** to a new GCP project
+- ✅ Setting up a **new environment** (staging, production, etc.)
+- ✅ You need **complete infrastructure provisioning** from scratch
+- ✅ You want **IAM roles automatically configured**
+- ✅ Starting with a **blank GCP project** (no resources created yet)
+- ✅ Doing **regular updates** to an existing deployment with full validation
+
+**Example Command:**
+```bash
+./deploy_full.sh --project-id biz2bricks-dev-v1 --env-file production-env.yaml
+```
+
+#### **Use `cloudbuild.yaml` When:**
+- ✅ Infrastructure **already exists**
+- ✅ You need **quick manual builds** without full automation
+- ✅ You want to use **Cloud Build UI** for triggering deployments
+- ✅ Doing **simple code updates** without environment changes
+- ⚠️ You're willing to **manually set API keys** after deployment
+
+**Example Command:**
+```bash
+gcloud builds submit --config cloudbuild.yaml .
+```
+
+---
+
+### 💡 Recommended Workflow
+
+**For New Projects:**
+1. **First Time**: Use `deploy_full.sh` to create all infrastructure
+2. **Subsequent Deploys**: Use `deploy_full.sh` for full deployment or `cloudbuild.yaml` for quick updates
+3. **Quick Updates**: Use `fast_deploy.sh` (wraps deploy_full.sh with smoke tests)
+
+**For Existing Projects:**
+- Use `deploy_full.sh` for most deployments (recommended)
+- Use `fast_deploy.sh` for quick code changes with validation
+- Use `test_only.sh` to validate existing deployments
+- Use `cloudbuild.yaml` for simple manual builds via Cloud Build UI
+
+---
+
+### 🔍 Post-Deployment Verification
+
+After deployment, verify the service is running correctly:
+
+**1. Get Service URL**
+```bash
+SERVICE_URL=$(gcloud run services describe document-intelligence-api \
+  --region us-central1 \
+  --format="value(status.url)")
+
+echo "Service URL: $SERVICE_URL"
+```
+
+**2. Health Check**
+```bash
+# Basic health check
+curl -fsS "$SERVICE_URL/health"
+
+# Expected output: {"status":"healthy"}
+```
+
+**3. Detailed Status Check**
+```bash
+# Detailed service status with Firebase/GCS connectivity
+curl -fsS "$SERVICE_URL/status" | python -m json.tool
+
+# Expected output includes:
+# {
+#   "status": "healthy",
+#   "environment": "production",
+#   "firebase": {
+#     "status": "connected",
+#     "project_id": "biz2bricks-dev-v1",
+#     "database_id": "biz2bricks-dev-v1-docdb-v1"
+#   },
+#   "gcs": {
+#     "status": "connected",
+#     "bucket": "biz2bricks-dev-v1-document-store"
+#   }
+# }
+```
+
+**4. Test Authentication**
+```bash
+# Test login endpoint
+curl -X POST "$SERVICE_URL/api/v1/auth/login" \
+  -H "Content-Type: application/json" \
+  -d '{"email":"test@example.com","password":"testpassword"}'
+```
+
+**5. View Logs**
+```bash
+# Stream live logs
+gcloud run services logs read document-intelligence-api \
+  --region us-central1 \
+  --limit 50
+
+# Follow logs in real-time
+gcloud run services logs tail document-intelligence-api \
+  --region us-central1
+```
+
+---
+
+### 🔧 Updating an Existing Deployment
+
+To update a running service with new code or configuration:
+
+**Quick Update (Code Changes Only):**
+```bash
+# Redeploy with skip-indexes flag (faster)
+./deploy_full.sh \
+  --project-id biz2bricks-dev-v1 \
+  --region us-central1 \
+  --env-file production-env.yaml \
+  --skip-indexes
+```
+
+**Update Environment Variables Only:**
+```bash
+gcloud run services update document-intelligence-api \
+  --region us-central1 \
+  --update-env-vars="LOG_LEVEL=DEBUG,MAX_FILE_SIZE=104857600"
+```
+
+**Update Resource Limits:**
+```bash
+gcloud run services update document-intelligence-api \
+  --region us-central1 \
+  --memory 2Gi \
+  --cpu 2 \
+  --max-instances 20
+```
+
+---
+
+### 🛡️ Production Deployment Checklist
+
+Before deploying to production, ensure:
+
+- [ ] All required environment variables are set in `production-env.yaml` or `.env.production`
+- [ ] Named Firestore database is created (not using `(default)`)
+- [ ] GCS bucket is created with proper CORS configuration
+- [ ] Service account has appropriate IAM roles:
+  - `roles/datastore.user` (Firestore access)
+  - `roles/storage.objectAdmin` (GCS access)
+  - `roles/secretmanager.secretAccessor` (if using Secret Manager)
+- [ ] JWT_SECRET_KEY is changed from default and is strong (256-bit)
+- [ ] CORS origins are configured for your production domain
+- [ ] OpenAI API key is valid and has sufficient credits
+- [ ] LlamaParse API key is valid (if using document parsing)
+- [ ] Firestore composite indexes are created (run `python create_firestore_indexes.py`)
+- [ ] Cloud Run resource limits are appropriate for your load:
+  - Memory: At least `1Gi` (recommended: `2Gi` for AI workloads)
+  - CPU: At least `1` (recommended: `2` for concurrent requests)
+  - Max instances: Set based on expected traffic and budget
+  - Timeout: At least `300s` for AI processing operations
+- [ ] Health checks pass: `/health`, `/status`
+- [ ] Authentication flow tested end-to-end
+- [ ] Document upload/download tested with real files
+- [ ] AI features tested (summary, FAQ, questions generation)
+- [ ] Logs show no errors or warnings
+- [ ] Monitoring and alerting configured (Cloud Monitoring)
+
+---
+
+### 🚨 Troubleshooting Deployment Issues
+
+**Issue: Cloud Build Permission Denied**
+```bash
+# Grant Cloud Build service account permissions
+PROJECT_NUMBER=$(gcloud projects describe YOUR_PROJECT_ID --format="value(projectNumber)")
+gcloud projects add-iam-policy-binding YOUR_PROJECT_ID \
+  --member="serviceAccount:${PROJECT_NUMBER}@cloudbuild.gserviceaccount.com" \
+  --role="roles/run.admin"
+
+gcloud iam service-accounts add-iam-policy-binding \
+  ${PROJECT_NUMBER}-compute@developer.gserviceaccount.com \
+  --member="serviceAccount:${PROJECT_NUMBER}@cloudbuild.gserviceaccount.com" \
+  --role="roles/iam.serviceAccountUser"
+```
+
+**Issue: Service Not Responding**
+```bash
+# Check service status
+gcloud run services describe document-intelligence-api \
+  --region us-central1
+
+# Check recent logs for errors
+gcloud run services logs read document-intelligence-api \
+  --region us-central1 \
+  --limit 100 | grep ERROR
+```
+
+**Issue: Firebase Connection Failed**
+```bash
+# Verify Firestore database exists
+gcloud firestore databases list
+
+# Verify service account permissions
+gcloud projects get-iam-policy YOUR_PROJECT_ID \
+  --flatten="bindings[].members" \
+  --filter="bindings.members:serviceAccount:YOUR_SA_EMAIL"
+```
+
+**Issue: GCS Upload/Download Failures**
+```bash
+# Verify bucket exists and permissions
+gsutil ls -L gs://your-bucket-name
+
+# Check CORS configuration
+gsutil cors get gs://your-bucket-name
+
+# Test upload from Cloud Run service account
+gcloud run services proxy document-intelligence-api --region us-central1
+```
+
+**Issue: Environment Variables Not Loading**
+```bash
+# List current environment variables
+gcloud run services describe document-intelligence-api \
+  --region us-central1 \
+  --format="json" | jq '.spec.template.spec.containers[0].env'
+
+# Update missing variables
+gcloud run services update document-intelligence-api \
+  --region us-central1 \
+  --update-env-vars="MISSING_VAR=value"
+```
+
+---
+
+### 📊 Monitoring and Maintenance
+
+**View Service Metrics:**
+```bash
+# Open Cloud Console for metrics
 gcloud run services describe document-intelligence-api \
   --region us-central1 \
   --format="value(status.url)"
 
-# Smoke check
-SERVICE_URL=$(gcloud run services describe document-intelligence-api --region us-central1 --format="value(status.url)")
-curl -fsS "$SERVICE_URL/health"
-curl -fsS "$SERVICE_URL/status" | python -m json.tool
+# Visit: https://console.cloud.google.com/run
 ```
+
+**Set Up Alerting:**
+```bash
+# Example: Alert on high error rate
+gcloud alpha monitoring policies create \
+  --notification-channels=YOUR_CHANNEL_ID \
+  --display-name="Cloud Run Error Rate Alert" \
+  --condition-display-name="Error rate > 5%" \
+  --condition-threshold-value=5 \
+  --condition-threshold-duration=300s
+```
+
+**Regular Maintenance Tasks:**
+- Review logs weekly for errors or warnings
+- Monitor Cloud Run costs and adjust scaling limits
+- Update dependencies monthly: `uv sync --upgrade`
+- Rotate JWT secrets quarterly
+- Review and optimize Firestore queries
+- Clean up old Cloud Build artifacts
+- Test disaster recovery procedures
 
 ## 📁 Project Structure
 
 ```
-document-intelligence-backend/
-├── app/
+doc_intelligence_backend_api_v2.0/
+├── app/                                    # Main application package
 │   ├── __init__.py
-│   ├── main.py                    # FastAPI application entry point
-│   ├── dependencies.py            # Global dependencies
+│   ├── main.py                            # FastAPI application entry point
+│   ├── config.py                          # Legacy config (use app.core.config instead)
+│   ├── dependencies.py                    # Global dependencies and DI setup
 │   │
-│   ├── ai/                        # AI/ML integration
+│   ├── ai/                                # AI/ML integration layer
 │   │   ├── __init__.py
-│   │   └── file_parser.py        # LlamaParse file parsing utilities
+│   │   └── file_parser.py                # LlamaParse document parsing utilities
 │   │
-│   ├── api/                       # API routes
+│   ├── api/                               # API routes and endpoints
 │   │   ├── __init__.py
-│   │   ├── deps.py               # API-specific dependencies
-│   │   └── v1/
+│   │   ├── deps.py                       # API-specific dependencies
+│   │   └── v1/                           # API version 1
 │   │       ├── __init__.py
-│   │       ├── auth.py           # Authentication endpoints
-│   │       ├── organizations.py  # Organization management
-│   │       ├── users.py          # User management
-│   │       ├── documents.py      # Document processing
-│   │       ├── folders.py        # Folder management
-│   │       ├── debug.py          # Debug endpoints (dev only)
-│   │       └── documents_modules/  # 🧠 Modular AI-powered document endpoints
+│   │       ├── auth.py                   # Session-based authentication endpoints
+│   │       ├── organizations.py          # Organization management endpoints
+│   │       ├── users.py                  # User management endpoints
+│   │       ├── documents.py              # Legacy document endpoints (maintained)
+│   │       ├── documents_main.py         # Main document router aggregator
+│   │       ├── folders.py                # Folder management endpoints
+│   │       ├── password.py               # Password reset/change endpoints
+│   │       ├── debug.py                  # Debug endpoints (development only)
+│   │       └── documents_modules/        # 🧠 Modular AI-powered document endpoints
 │   │           ├── __init__.py
 │   │           ├── common.py              # Shared utilities for document modules
-│   │           ├── document_ai_content.py  # AI content management
-│   │           ├── document_download.py    # Download management
+│   │           ├── document_ai_content.py  # AI content management endpoints
+│   │           ├── document_download.py    # Download management endpoints
 │   │           ├── document_faq.py         # AI FAQ generation & retrieval
 │   │           ├── document_management.py  # Document CRUD operations
 │   │           ├── document_processing.py  # Document parsing & processing
@@ -1027,71 +1733,138 @@ document-intelligence-backend/
 │   │           ├── document_sync.py        # GCS/Firestore synchronization
 │   │           └── document_upload.py      # Document upload handling
 │   │
-│   ├── core/                     # Core functionality
+│   ├── core/                              # Core functionality layer
 │   │   ├── __init__.py
-│   │   ├── config.py             # Settings management
-│   │   ├── firebase_client.py    # Firebase/Firestore client
-│   │   ├── gcs_client.py         # Google Cloud Storage client
-│   │   ├── security.py           # JWT and security utilities
-│   │   ├── logging.py            # Structured logging setup
-│   │   └── exceptions.py         # Custom exceptions
+│   │   ├── config.py                     # Pydantic settings & environment config
+│   │   ├── firebase_client.py            # Firebase/Firestore singleton client
+│   │   ├── gcs_client.py                 # Google Cloud Storage singleton client
+│   │   ├── security.py                   # JWT, password hashing, session management
+│   │   ├── simple_auth.py                # Simplified auth utilities
+│   │   ├── logging.py                    # Structured logging with middleware
+│   │   └── exceptions.py                 # Custom exception hierarchy
 │   │
-│   ├── models/                   # Data models
+│   ├── models/                            # Data models and schemas
 │   │   ├── __init__.py
-│   │   ├── user.py              # User models
-│   │   ├── organization.py      # Organization models
-│   │   ├── document.py          # Document models
-│   │   ├── folder.py            # Folder models
-│   │   └── schemas.py           # Request/response schemas
+│   │   ├── user.py                       # User Pydantic models
+│   │   ├── organization.py               # Organization Pydantic models
+│   │   ├── document.py                   # Document Pydantic models with AI fields
+│   │   ├── folder.py                     # Folder Pydantic models
+│   │   └── schemas.py                    # Request/response schemas
 │   │
-│   ├── services/                # Business logic
+│   ├── services/                          # Business logic layer
 │   │   ├── __init__.py
-│   │   ├── auth_service.py      # Session-based authentication logic
-│   │   ├── user_service.py      # User management logic
-│   │   ├── org_service.py       # Organization management
-│   │   ├── folder_service.py    # Folder management logic
-│   │   ├── document_service.py  # Legacy document service (maintained for compatibility)
-│   │   └── document/            # 🚀 Advanced Document Service Architecture
+│   │   ├── auth_service.py               # Session-based authentication logic
+│   │   ├── user_service.py               # User management service
+│   │   ├── org_service.py                # Organization management service
+│   │   ├── folder_service.py             # Folder management service
+│   │   ├── vector_indexing_service.py    # Pinecone vector indexing service
+│   │   ├── document_service.py           # Legacy document service (compatibility)
+│   │   ├── document_service_original.py  # Original backup (reference only)
+│   │   └── document/                     # 🚀 Advanced Document Service Architecture
 │   │       ├── __init__.py
-│   │       ├── document_service.py           # Main facade service
-│   │       ├── document_base_service.py      # Base service with common functionality
-│   │       ├── document_validation_service.py # File validation, virus scanning
-│   │       ├── document_storage_service.py   # GCS operations, path management
-│   │       ├── document_crud_service.py      # CRUD operations, Firestore lifecycle
-│   │       ├── document_query_service.py     # Complex queries, search operations
+│   │       ├── document_service.py           # Main facade service (composition)
+│   │       ├── document_base_service.py      # Base service with shared functionality
+│   │       ├── document_validation_service.py # File validation & type checking
+│   │       ├── document_storage_service.py   # GCS operations & path management
+│   │       ├── document_crud_service.py      # CRUD ops & Firestore lifecycle
+│   │       ├── document_query_service.py     # Complex queries & search
 │   │       ├── document_ai_service.py        # AI content generation (summary, FAQ)
 │   │       ├── document_sync_service.py      # GCS/Firestore sync validation
-│   │       ├── document_download_service.py  # Signed URLs, download management
+│   │       ├── document_download_service.py  # Signed URLs & download mgmt
 │   │       ├── document_parsing_service.py   # LlamaParse integration
 │   │       └── document_summarization_service.py # AI summarization workflows
 │   │
-│   └── utils/                   # Utilities
+│   └── utils/                             # Utility functions
 │       ├── __init__.py
-│       ├── helpers.py           # Helper functions
-│       └── validators.py        # Input validators
+│       ├── helpers.py                    # General helper functions
+│       └── validators.py                 # Input validation utilities
 │
-├── scripts/                     # Utility scripts
-│   ├── gcp_auth_helper.py       # GCP authentication helper
-│   └── verify_gcs_setup.py      # GCS setup verification
+├── scripts/                               # Utility and setup scripts
+│   ├── gcp_auth_helper.py                # GCP authentication verification helper
+│   └── verify_gcs_setup.py               # GCS bucket setup verification
 │
-├── docs/                        # Sample documents for testing
-├── tests/                       # Test files (when added)
+├── docs/                                  # Sample documents for testing
+├── tests/                                 # Test suite (pytest with async support)
 │
-├── requirements.txt             # Python dependencies (pip)
-├── pyproject.toml              # Python project config (uv)
-├── uv.lock                     # Locked dependencies (uv)
-├── .env                        # Environment variables (development)  
-├── .env.production             # Production environment variables
-├── .env.example                # Environment template
-├── cloudbuild.yaml             # Cloud Build configuration
-├── Dockerfile                  # Container image definition
-├── firestore.indexes.json      # Optional: Firestore index definitions (if exported)
-├── create_firestore_indexes.py # Index creation utility
-├── setup_gcp_bucket.py         # GCS bucket setup utility
-├── deploy_full.sh              # Unified Cloud Run deployment script
-├── deploy_to_cloudrun.py       # Deployment automation
-└── README.md                   # This documentation
+├── .github/                               # GitHub configuration (not used for CI/CD)
+│   └── workflows/                        # Archived workflows (reference only)
+│
+├── requirements.txt                       # Python dependencies (pip/legacy)
+├── pyproject.toml                        # Python project config (uv-managed)
+├── uv.lock                               # Locked dependencies (uv)
+│
+├── .env                                  # Local development environment variables
+├── .env.dev                              # Development environment (alternative)
+├── .env.test                             # Test environment variables
+├── .env.production                       # Production environment variables
+├── .env.example                          # Environment variable template
+├── production-env.yaml                   # Production config (YAML format)
+├── development-env.yaml                  # Development config (YAML format)
+│
+├── Dockerfile                            # Multi-stage container image definition
+├── cloudbuild.yaml                       # Cloud Build manual deployment config
+├── .dockerignore                         # Docker build exclusions
+│
+├── firestore.indexes.json                # Firestore composite index definitions
+├── create_firestore_indexes.py           # Firestore index creation utility
+├── deploy_firestore_indexes.py           # Firestore index deployment utility
+│
+├── setup_gcp_bucket.py                   # Interactive GCS bucket setup
+├── create_test_user.py                   # Test user creation utility
+│
+├── deploy_full.sh                        # ⭐ Comprehensive deployment script (recommended)
+├── fast_deploy.sh                        # Quick deployment with smoke tests
+├── test_only.sh                          # Rapid deployment validation
+├── run_dev.sh                            # Optimized development server script
+│
+├── CLAUDE.md                             # Claude Code instructions (codebase guide)
+├── AGENTS.md                             # AI agents documentation
+├── README.md                             # This comprehensive documentation
+├── LICENSE                               # Project license
+└── .gitignore                            # Git exclusions
 ```
+
+### 📝 Key File Descriptions
+
+**Configuration Files:**
+- `app/core/config.py` - **Primary** configuration using Pydantic settings
+- `.env` files - Environment-specific variables (never commit `.env`, only `.env.example`)
+- `*-env.yaml` - YAML format environment configs for deployment scripts
+
+**Deployment Files:**
+- `deploy_full.sh` - **Recommended** comprehensive deployment with full automation
+- `fast_deploy.sh` - Quick deployment with smoke test validation
+- `test_only.sh` - Rapid smoke test validation for existing deployments
+- `cloudbuild.yaml` - Cloud Build configuration for manual triggers
+- `cloudbuild.develop.yaml` - Automated deployment for develop branch
+- `cloudbuild.production.yaml` - Production deployment with gradual rollout
+- `Dockerfile` - Multi-stage build optimized for Cloud Run
+
+**Maintenance Scripts** (scripts/maintenance/):
+- `cleanup_duplicate_documents.py` - Clean duplicate Firestore documents
+- `cleanup_duplicate_storage_paths.py` - Clean duplicate GCS storage paths
+- `diagnose_document_sync.py` - Troubleshoot document synchronization issues
+
+**Service Architecture:**
+- `app/services/document/` - Modular document services following Facade pattern
+- `app/services/document/document_service.py` - Main orchestrator (composes specialized services)
+- Each specialized service handles one domain (validation, storage, AI, etc.)
+
+**API Architecture:**
+- `app/api/v1/documents_modules/` - Modular AI endpoints with intelligent caching
+- `app/api/v1/auth.py` - Session-based JWT authentication with refresh tokens
+- Each module is self-contained with GET/POST/PUT operations
+
+**AI Integration:**
+- `app/services/document/document_ai_service.py` - AI content generation
+- `app/ai/file_parser.py` - LlamaParse document parsing
+- AI content cached in Firestore for cost optimization
+
+**Development Tools:**
+- `run_dev.sh` - Prevents reload loops, smart file watching
+- `scripts/gcp_auth_helper.py` - Verifies GCP authentication
+- `scripts/verify_gcs_setup.py` - Validates GCS configuration
+- `create_test_user.py` - Creates test users for development
 
 ## 🔧 Troubleshooting
 
