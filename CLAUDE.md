@@ -40,10 +40,17 @@ uv run mypy app/                                     # Type check
 
 **Firebase/GCP Setup**:
 ```bash
-python create_firestore_indexes.py                   # Create required indexes
-python setup_gcp_bucket.py                           # Interactive GCS setup
+# Manual setup utilities (optional - deploy_full.sh automates most of this)
+python create_firestore_indexes.py                   # Create required indexes (automated in deploy_full.sh)
+python setup_gcp_bucket.py                           # Interactive GCS setup (automated in deploy_full.sh)
 python scripts/gcp_auth_helper.py                    # Verify GCP auth
 python scripts/verify_gcs_setup.py                   # Verify GCS setup
+
+# Note: deploy_full.sh automatically creates:
+#  - Firestore database (native mode)
+#  - GCS bucket with versioning
+#  - Service accounts and IAM roles
+#  - Firestore composite indexes
 ```
 
 **Cloud Run Deployment**:
@@ -494,14 +501,22 @@ GOOGLE_APPLICATION_CREDENTIALS="/path/to/service-account.json"
 # Leave GOOGLE_APPLICATION_CREDENTIALS unset
 ```
 
-## Firestore Composite Indexes
+## Firestore Database & Indexes
 
-**Required indexes** (run `python create_firestore_indexes.py`):
+**Firestore Database Creation:**
+- ✅ **Automated by deploy_full.sh** - Creates named database in native mode
+- Uses `FIREBASE_DATABASE_ID` from env file (defaults to `PROJECT_ID-docdb-v1`)
+- Idempotent - safe to re-run, won't recreate existing database
+- For manual creation (if needed): Use Firebase Console or `gcloud firestore databases create`
+
+**Required Composite Indexes** (run `python create_firestore_indexes.py`):
 
 1. **Organizations**: `is_active` (ASC) + `created_at` (DESC)
 2. **Organizations with filter**: `is_active` (ASC) + `plan_type` (ASC) + `created_at` (DESC)
 3. **Documents**: `organization_id` (ASC) + `is_active` (ASC) + `created_at` (DESC)
 4. **Folders**: `organization_id` (ASC) + `parent_id` (ASC) + `name` (ASC)
+
+**Note**: `deploy_full.sh` automatically deploys indexes via `deploy_firestore_indexes.py`
 
 ## Coding Standards
 
@@ -679,9 +694,10 @@ pytest tests/ -v -m "integration"
 
 **Features**:
 - Complete infrastructure setup
+- **Automated Firestore database creation** (native mode)
 - Service account and IAM management
-- GCS bucket lifecycle policies
-- Firestore index deployment
+- GCS bucket creation with versioning and lifecycle policies
+- Firestore composite index deployment
 - Environment variable parsing
 
 **2. Cloud Build**:
