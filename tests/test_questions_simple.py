@@ -1,21 +1,36 @@
 """
 Simple test script for Document Questions API.
+
+NOTE: This is a standalone manual testing script, NOT a proper pytest test.
+It requires pre-existing user credentials in the database.
+
+For proper automated tests, use tests/test_document_questions.py which creates
+dynamic test organizations and users.
+
+To use this script:
+1. Update the email/password below with valid credentials from your database
+2. Run: python -m pytest tests/test_questions_simple.py -v -s
 """
 
 import asyncio
 import httpx
+from test_config import config
 
-BASE_URL = "http://localhost:8000"
+# MANUAL CONFIGURATION: Update with valid credentials from your database
+MANUAL_TEST_EMAIL = "tjohns@gmail.com"
+MANUAL_TEST_PASSWORD = "Pa**Word1$"
 
 
 async def test_questions():
-    """Test the questions endpoints."""
-    async with httpx.AsyncClient(base_url=BASE_URL, timeout=30.0) as client:
+    """Test the questions endpoints with manual credentials."""
+    async with httpx.AsyncClient(base_url=config.base_url, timeout=30.0) as client:
         # 1. Login
         print("1. Authenticating...")
+        print(f"   Using: {MANUAL_TEST_EMAIL}")
+        print(f"   Target: {config.base_url}")
         login_response = await client.post(
-            "/api/v1/auth/login",
-            json={"email": "tjohns@gmail.com", "password": "Pa**Word1$"},
+            f"{config.api_prefix}/auth/login",
+            json={"email": MANUAL_TEST_EMAIL, "password": MANUAL_TEST_PASSWORD},
         )
 
         if login_response.status_code != 200:
@@ -33,7 +48,7 @@ async def test_questions():
 
         # 2. List documents to find a parsed one
         print("\n2. Listing documents...")
-        docs_response = await client.get("/api/v1/documents", headers=headers)
+        docs_response = await client.get(f"{config.api_prefix}/documents", headers=headers)
 
         if docs_response.status_code == 200:
             docs_data = docs_response.json()
@@ -55,7 +70,7 @@ async def test_questions():
                     # 3. Clear any existing questions first
                     print(f"\n3. Clearing existing questions for {filename}...")
                     clear_response = await client.put(
-                        "/api/v1/documents/questions",
+                        f"{config.api_prefix}/documents/questions",
                         headers=headers,
                         params={"file_name": filename},
                         json={"questions": []},
@@ -67,7 +82,7 @@ async def test_questions():
                     # 4. Generate questions (should create new)
                     print(f"\n4. Generating questions for {filename} (first time)...")
                     gen_response = await client.post(
-                        "/api/v1/documents/questions",
+                        f"{config.api_prefix}/documents/questions",
                         headers=headers,
                         params={"file_name": filename},
                         json={
@@ -92,7 +107,7 @@ async def test_questions():
                         "\n5. Attempting to generate again (should return existing)..."
                     )
                     gen2_response = await client.post(
-                        "/api/v1/documents/questions",
+                        f"{config.api_prefix}/documents/questions",
                         headers=headers,
                         params={"file_name": filename},
                         json={
@@ -112,7 +127,7 @@ async def test_questions():
                     # 6. Get questions
                     print("\n6. Getting questions via GET endpoint...")
                     get_response = await client.get(
-                        "/api/v1/documents/questions",
+                        f"{config.api_prefix}/documents/questions",
                         headers=headers,
                         params={"file_name": filename},
                     )
@@ -130,7 +145,7 @@ async def test_questions():
                     # 7. Update questions
                     print("\n7. Updating questions with PUT endpoint...")
                     update_response = await client.put(
-                        "/api/v1/documents/questions",
+                        f"{config.api_prefix}/documents/questions",
                         headers=headers,
                         params={"file_name": filename},
                         json={

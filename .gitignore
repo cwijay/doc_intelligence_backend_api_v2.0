@@ -3,9 +3,12 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+.env.dev
+.env.production
+
 # C extensions
 *.so
-
+.env.test
 /docs
 github-actions-sa-key.json
 
@@ -146,3 +149,11 @@ Thumbs.db
 
 ./document-intelligence-backend/cors-update.env
 document-intelligence-backend/.env 2.example
+
+# CI/CD
+scripts/setup_secrets.sh.log
+*.cloudbuild.log
+.cloudbuild/
+cloudbuild-local.yaml
+.gcloud/test_output.txt
+deployment.log

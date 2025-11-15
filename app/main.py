@@ -80,11 +80,11 @@ async def lifespan(app: FastAPI):
     logger.info("Application shutdown completed", tasks=shutdown_tasks)
 
 
-# Create FastAPI application with redirect_slashes disabled
+# Create FastAPI application with redirect_slashes enabled for proper routing
 app = FastAPI(
     title=settings.PROJECT_NAME,
     version=settings.VERSION,
-    redirect_slashes=False,
+    redirect_slashes=True,
     description="""# 🚀 Document Intelligence API
 
 ## Overview

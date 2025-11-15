@@ -3,64 +3,40 @@ Tests for Document Questions Endpoints.
 
 Tests the document questions generation, retrieval, and update functionality
 with authentication and various scenarios.
+
+NOTE: These tests now use dynamic test organizations and users created via fixtures.
+No hardcoded credentials are used.
 """
 
 import pytest
 import asyncio
 from typing import Dict
-import httpx
+from test_config import config
 
-
-# Configuration
-BASE_URL = "http://localhost:8000"
-API_PREFIX = "/api/v1"
-
-# Test credentials
-TEST_USER = {"email": "tjohns@gmail.com", "password": "Pa**Word1$"}
-
-# Test document filename (should exist and be parsed)
+# NOTE: Test document would need to be uploaded first in a proper test setup
+# For now, keeping this constant but tests should create their own test documents
 TEST_DOCUMENT = "Sample2.pdf"
 
 
+@pytest.mark.asyncio
 class TestDocumentQuestions:
-    """Test suite for document questions endpoints."""
+    """Test suite for document questions endpoints.
 
-    @classmethod
-    def setup_class(cls):
-        """Setup class-level test fixtures."""
-        cls.client = httpx.AsyncClient(base_url=BASE_URL, timeout=30.0)
-        cls.auth_token = None
-        cls.session_token = None
-        cls.org_id = None
-        cls.user_id = None
+    NOTE: All tests now use fixtures from conftest.py:
+    - http_client: Async HTTP client configured with Cloud Run URL
+    - test_org_and_user: Dynamically creates test org + user with credentials
 
-    @classmethod
-    async def teardown_class(cls):
-        """Cleanup after tests."""
-        await cls.client.aclose()
+    No hardcoded credentials or class-level setup needed.
+    """
 
-    async def authenticate(self) -> Dict[str, str]:
-        """Authenticate and get session token."""
-        # Always get a fresh token for each test to avoid expiration issues
-        response = await self.client.post(f"{API_PREFIX}/auth/login", json=TEST_USER)
-
-        assert response.status_code == 200, f"Authentication failed: {response.text}"
-
-        auth_data = response.json()
-        self.session_token = auth_data["access_token"]
-        self.org_id = auth_data["user"]["org_id"]
-        self.user_id = auth_data["user"]["user_id"]
-
-        return {"Authorization": f"Bearer {self.session_token}"}
-
-    @pytest.mark.asyncio
-    async def test_01_generate_questions_first_time(self):
+    async def test_01_generate_questions_first_time(self, http_client, test_org_and_user):
         """Test generating questions for the first time (should create new)."""
-        headers = await self.authenticate()
+        # Get authentication headers from fixture
+        headers = test_org_and_user["credentials"].auth_headers
 
         # First, clear any existing questions (using PUT with empty list)
-        clear_response = await self.client.put(
-            f"{API_PREFIX}/documents/questions",
+        clear_response = await http_client.put(
+            f"{config.api_prefix}/documents/questions",
             headers=headers,
             params={"file_name": TEST_DOCUMENT},
             json={"questions": []},
@@ -75,8 +51,8 @@ class TestDocumentQuestions:
         await asyncio.sleep(1)
 
         # Generate questions
-        response = await self.client.post(
-            f"{API_PREFIX}/documents/questions",
+        response = await http_client.post(
+            f"{config.api_prefix}/documents/questions",
             headers=headers,
             params={"file_name": TEST_DOCUMENT},
             json={
@@ -89,8 +65,8 @@ class TestDocumentQuestions:
             print(f"Generation failed with status {response.status_code}")
             print(f"Response: {response.text}")
             # Check if document exists and has content
-            check_response = await self.client.get(
-                f"{API_PREFIX}/documents/", headers=headers
+            check_response = await http_client.get(
+                f"{config.api_prefix}/documents/", headers=headers
             )
             if check_response.status_code == 200:
                 docs = check_response.json().get("documents", [])
@@ -124,14 +100,13 @@ class TestDocumentQuestions:
         for i, question in enumerate(data["ai_questions"][:3], 1):
             print(f"   Q{i}: {question[:100]}...")
 
-    @pytest.mark.asyncio
-    async def test_02_generate_questions_when_exists(self):
+    async def test_02_generate_questions_when_exists(self, http_client, test_org_and_user):
         """Test generating questions when they already exist (should return existing)."""
-        headers = await self.authenticate()
+        headers = test_org_and_user["credentials"].auth_headers
 
         # Try to generate again - should return existing
-        response = await self.client.post(
-            f"{API_PREFIX}/documents/questions",
+        response = await http_client.post(
+            f"{config.api_prefix}/documents/questions",
             headers=headers,
             params={"file_name": TEST_DOCUMENT},
             json={
@@ -153,13 +128,12 @@ class TestDocumentQuestions:
             f"✅ Returned existing {len(data['ai_questions'])} questions (not regenerated)"
         )
 
-    @pytest.mark.asyncio
-    async def test_03_get_questions(self):
+    async def test_03_get_questions(self, http_client, test_org_and_user):
         """Test retrieving existing questions."""
-        headers = await self.authenticate()
+        headers = test_org_and_user["credentials"].auth_headers
 
-        response = await self.client.get(
-            f"{API_PREFIX}/documents/questions",
+        response = await http_client.get(
+            f"{config.api_prefix}/documents/questions",
             headers=headers,
             params={"file_name": TEST_DOCUMENT},
         )
@@ -178,10 +152,9 @@ class TestDocumentQuestions:
         print(f"✅ Retrieved {data['questions_count']} questions")
         print(f"   Preview: {data['questions_preview']}")
 
-    @pytest.mark.asyncio
-    async def test_04_update_questions_direct(self):
+    async def test_04_update_questions_direct(self, http_client, test_org_and_user):
         """Test updating questions with direct list."""
-        headers = await self.authenticate()
+        headers = test_org_and_user["credentials"].auth_headers
 
         new_questions = [
             "What is the main purpose of this document?",
@@ -191,8 +164,8 @@ class TestDocumentQuestions:
             "What are the practical implications?",
         ]
 
-        response = await self.client.put(
-            f"{API_PREFIX}/documents/questions",
+        response = await http_client.put(
+            f"{config.api_prefix}/documents/questions",
             headers=headers,
             params={"file_name": TEST_DOCUMENT},
             json={"questions": new_questions},
@@ -212,13 +185,12 @@ class TestDocumentQuestions:
 
         print(f"✅ Updated with {len(new_questions)} new questions")
 
-    @pytest.mark.asyncio
-    async def test_05_update_questions_regenerate(self):
+    async def test_05_update_questions_regenerate(self, http_client, test_org_and_user):
         """Test regenerating questions with custom prompt."""
-        headers = await self.authenticate()
+        headers = test_org_and_user["credentials"].auth_headers
 
-        response = await self.client.put(
-            f"{API_PREFIX}/documents/questions",
+        response = await http_client.put(
+            f"{config.api_prefix}/documents/questions",
             headers=headers,
             params={"file_name": TEST_DOCUMENT},
             json={
@@ -252,14 +224,13 @@ class TestDocumentQuestions:
         for i, question in enumerate(data["ai_questions"][:3], 1):
             print(f"   Q{i}: {question[:100]}...")
 
-    @pytest.mark.asyncio
-    async def test_06_generate_without_parsed_content(self):
+    async def test_06_generate_without_parsed_content(self, http_client, test_org_and_user):
         """Test generating questions for document without parsed content."""
-        headers = await self.authenticate()
+        headers = test_org_and_user["credentials"].auth_headers
 
         # Use a document that might not have parsed content
-        response = await self.client.post(
-            f"{API_PREFIX}/documents/questions",
+        response = await http_client.post(
+            f"{config.api_prefix}/documents/questions",
             headers=headers,
             params={"file_name": "nonexistent.pdf"},
             json={"question_count": 5},
@@ -275,14 +246,13 @@ class TestDocumentQuestions:
 
         print("✅ Properly handled nonexistent document")
 
-    @pytest.mark.asyncio
-    async def test_07_invalid_question_count(self):
+    async def test_07_invalid_question_count(self, http_client, test_org_and_user):
         """Test with invalid question count."""
-        headers = await self.authenticate()
+        headers = test_org_and_user["credentials"].auth_headers
 
         # Test with too many questions (>20)
-        response = await self.client.post(
-            f"{API_PREFIX}/documents/questions",
+        response = await http_client.post(
+            f"{config.api_prefix}/documents/questions",
             headers=headers,
             params={"file_name": TEST_DOCUMENT},
             json={"question_count": 25},
@@ -296,14 +266,13 @@ class TestDocumentQuestions:
         else:
             print("✅ Invalid question count rejected")
 
-    @pytest.mark.asyncio
-    async def test_08_update_validation(self):
+    async def test_08_update_validation(self, http_client, test_org_and_user):
         """Test update endpoint validation."""
-        headers = await self.authenticate()
+        headers = test_org_and_user["credentials"].auth_headers
 
         # Test with neither questions nor prompt
-        response = await self.client.put(
-            f"{API_PREFIX}/documents/questions",
+        response = await http_client.put(
+            f"{config.api_prefix}/documents/questions",
             headers=headers,
             params={"file_name": TEST_DOCUMENT},
             json={},
@@ -324,8 +293,8 @@ class TestDocumentQuestions:
             )
 
         # Test with both questions and prompt
-        response = await self.client.put(
-            f"{API_PREFIX}/documents/questions",
+        response = await http_client.put(
+            f"{config.api_prefix}/documents/questions",
             headers=headers,
             params={"file_name": TEST_DOCUMENT},
             json={"questions": ["Q1", "Q2"], "prompt": "Some prompt"},
@@ -346,13 +315,12 @@ class TestDocumentQuestions:
 
         print("✅ Update validation working correctly")
 
-    @pytest.mark.asyncio
-    async def test_09_clear_questions(self):
+    async def test_09_clear_questions(self, http_client, test_org_and_user):
         """Test clearing questions by setting empty list."""
-        headers = await self.authenticate()
+        headers = test_org_and_user["credentials"].auth_headers
 
-        response = await self.client.put(
-            f"{API_PREFIX}/documents/questions",
+        response = await http_client.put(
+            f"{config.api_prefix}/documents/questions",
             headers=headers,
             params={"file_name": TEST_DOCUMENT},
             json={"questions": []},
@@ -364,8 +332,8 @@ class TestDocumentQuestions:
         assert data["ai_questions"] == []
 
         # Verify questions are cleared
-        get_response = await self.client.get(
-            f"{API_PREFIX}/documents/questions",
+        get_response = await http_client.get(
+            f"{config.api_prefix}/documents/questions",
             headers=headers,
             params={"file_name": TEST_DOCUMENT},
         )
@@ -376,13 +344,12 @@ class TestDocumentQuestions:
 
         print("✅ Questions cleared successfully")
 
-    @pytest.mark.asyncio
-    async def test_10_generate_after_clear(self):
+    async def test_10_generate_after_clear(self, http_client, test_org_and_user):
         """Test that generation works after clearing (should generate new)."""
-        headers = await self.authenticate()
+        headers = test_org_and_user["credentials"].auth_headers
 
-        response = await self.client.post(
-            f"{API_PREFIX}/documents/questions",
+        response = await http_client.post(
+            f"{config.api_prefix}/documents/questions",
             headers=headers,
             params={"file_name": TEST_DOCUMENT},
             json={"question_count": 3},

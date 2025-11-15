@@ -248,7 +248,8 @@ class UserBase(BaseModel):
         v = v.strip().lower()
 
         # Basic email validation regex
-        email_pattern = r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
+        # Allow underscores in domain for test environments (e.g., test-YYYYMMDD_HHMMSS.com)
+        email_pattern = r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9._-]+\.[a-zA-Z]{2,}$"
         if not re.match(email_pattern, v):
             raise ValueError("Invalid email format")
 

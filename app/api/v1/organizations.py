@@ -318,8 +318,10 @@ async def get_organization_stats() -> Dict[str, Any]:
         logger.debug("Retrieving organization statistics")
 
         # Get all organizations to calculate stats
+        # Note: Using per_page=100 (max allowed) - for production with >100 orgs,
+        # consider implementing a dedicated stats aggregation
         all_orgs = await organization_service.list_organizations(
-            PaginationParams(page=1, per_page=1000),
+            PaginationParams(page=1, per_page=100),
             OrganizationFilters(is_active=None),  # Include inactive
         )
 
