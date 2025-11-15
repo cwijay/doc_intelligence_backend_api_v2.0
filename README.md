@@ -1406,7 +1406,7 @@ Use this table to understand what each deployment method creates and when to use
 | Creates GCS Bucket | ✅ Yes | ❌ No |
 | Creates Service Account | ✅ Yes | ❌ No |
 | Configures IAM Permissions | ✅ Yes (6 roles) | ❌ No |
-| Creates Firestore Database | ⚠️ Manual* | ⚠️ Manual* |
+| Creates Firestore Database | ✅ Yes (Automated)** | ⚠️ Manual* |
 | **Deployment Features** |
 | Enables GCP APIs | ✅ Yes | ⚠️ Partial |
 | Builds Docker Image | ✅ Yes | ✅ Yes |
@@ -1421,7 +1421,8 @@ Use this table to understand what each deployment method creates and when to use
 | **Best Use Case** | Full deployment | Quick manual builds |
 | **Lines of Code** | 542 | 90 |
 
-*Firestore database must be created manually via Firebase Console before running any deployment script.
+*Firestore database must be created manually for cloudbuild.yaml deployments.
+**deploy_full.sh automatically creates Firestore database if FIREBASE_DATABASE_ID is set in env file (defaults to PROJECT_ID-docdb-v1).
 
 ---
 

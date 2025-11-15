@@ -246,6 +246,37 @@ YAML
     fi
 }
 
+ensure_firestore_database() {
+    local database_id="$1"
+    local project="$2"
+    local region="$3"
+
+    # Check if database already exists
+    if gcloud firestore databases describe --database="$database_id" --project="$project" --format="value(name)" >/dev/null 2>&1; then
+        log_info "Firestore database exists: $database_id"
+        return 0
+    fi
+
+    log_info "Creating Firestore database: $database_id in region $region"
+
+    # Create the Firestore database
+    if gcloud firestore databases create \
+        --database="$database_id" \
+        --location="$region" \
+        --type=firestore-native \
+        --project="$project" \
+        --quiet 2>&1; then
+        log_success "Created Firestore database: $database_id"
+    else
+        # Check if it was created despite the error (race condition)
+        if gcloud firestore databases describe --database="$database_id" --project="$project" --format="value(name)" >/dev/null 2>&1; then
+            log_warn "Firestore database $database_id already exists; continuing"
+        else
+            exit_with_error "Failed to create Firestore database '$database_id'. Please create it manually or check permissions."
+        fi
+    fi
+}
+
 deploy_firestore_indexes() {
     local project="$1"
 
@@ -380,6 +411,14 @@ main() {
                 cat <<EOF
 Usage: $0 --project-id PROJECT_ID [options]
 
+This script automates complete infrastructure provisioning including:
+  ✓ GCS bucket creation with versioning and lifecycle policies
+  ✓ Firestore database creation (native mode)
+  ✓ Service account creation and IAM role binding
+  ✓ Firestore composite index deployment
+  ✓ Docker image build and push to GCR
+  ✓ Cloud Run service deployment with health checks
+
 Options:
   --project-id        (required) Google Cloud project ID
   --region            Cloud Run region (default: us-central1)
@@ -394,6 +433,10 @@ Options:
   --timeout           Request timeout seconds (default: 300)
   --skip-indexes      Skip Firestore index deployment
   -h, --help          Show this help message
+
+Notes:
+  - FIREBASE_DATABASE_ID can be set in env file (default: PROJECT_ID-docdb-v1)
+  - All operations are idempotent and safe to re-run
 EOF
                 exit 0
                 ;;
@@ -461,6 +504,16 @@ EOF
         env_set "GCS_BUCKET_NAME" "$bucket_name"
     fi
 
+    # Get or set Firestore database ID
+    local database_id="$(env_get "FIREBASE_DATABASE_ID")"
+    if [[ -z "$database_id" ]]; then
+        database_id="${project_id}-docdb-v1"
+        log_warn "No FIREBASE_DATABASE_ID found in env file. Defaulting to $database_id"
+        env_set "FIREBASE_DATABASE_ID" "$database_id"
+    else
+        env_set "FIREBASE_DATABASE_ID" "$database_id"
+    fi
+
     if [[ -z "$service_account" ]]; then
         log_info "Attempting to detect existing Cloud Run service for service account reuse"
         service_account="$(gcloud run services describe "$service_name" --region "$region" --format="value(spec.template.spec.serviceAccountName)" 2>/dev/null || true)"
@@ -498,6 +551,8 @@ EOF
     done
 
     ensure_bucket "$bucket_name" "$project_id" "$region"
+
+    ensure_firestore_database "$database_id" "$project_id" "$region"
 
     local tmp_env_file
     tmp_env_file="$(mktemp)"
