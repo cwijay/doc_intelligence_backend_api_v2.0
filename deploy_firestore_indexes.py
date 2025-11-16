@@ -34,9 +34,10 @@ class Colors:
 class FirestoreIndexDeployer:
     """Automated Firestore composite index deployment."""
     
-    def __init__(self, project_id: str, method: str = "firebase"):
+    def __init__(self, project_id: str, method: str = "firebase", database: str = "(default)"):
         self.project_id = project_id
         self.method = method  # "firebase" or "gcloud"
+        self.database = database
         self.indexes_file = "firestore.indexes.json"
         
     def log(self, message: str, level: str = "INFO"):
@@ -188,9 +189,10 @@ class FirestoreIndexDeployer:
                     "--field-config",
                     f"field-path={field['fieldPath']},order={field['order']}"
                 ])
-            
-            # Add project
+
+            # Add project and database
             cmd.extend(["--project", self.project_id])
+            cmd.extend(["--database", self.database])
             
             # Execute command
             success, _ = self.run_command(cmd, check=False)
@@ -221,6 +223,7 @@ class FirestoreIndexDeployer:
             success, output = self.run_command([
                 "gcloud", "firestore", "indexes", "composite", "list",
                 "--project", self.project_id,
+                "--database", self.database,
                 "--format", "table(name,state,queryScope)"
             ], capture_output=True, check=False)
             
@@ -283,12 +286,18 @@ Examples:
         default="firebase",
         help="Method to use for index deployment (default: firebase)"
     )
-    
+    parser.add_argument(
+        "--database",
+        default="(default)",
+        help="Firestore database name (default: (default))"
+    )
+
     args = parser.parse_args()
-    
+
     deployer = FirestoreIndexDeployer(
         project_id=args.project_id,
-        method=args.method
+        method=args.method,
+        database=args.database
     )
     
     success = deployer.deploy()

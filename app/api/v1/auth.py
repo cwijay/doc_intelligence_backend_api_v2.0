@@ -1034,7 +1034,7 @@ async def list_organizations_for_registration() -> List[OrganizationResponse]:
 )
 async def lookup_organizations(
     query: str = Query(
-        ..., description="Search query for organization name", min_length=1
+        "", description="Search query for organization name (empty string returns all active organizations)"
     )
 ) -> List[OrganizationResponse]:
     """
