@@ -509,7 +509,26 @@ GOOGLE_APPLICATION_CREDENTIALS="/path/to/service-account.json"
 - Idempotent - safe to re-run, won't recreate existing database
 - For manual creation (if needed): Use Firebase Console or `gcloud firestore databases create`
 
-**Required Composite Indexes** (run `python create_firestore_indexes.py`):
+**⚠️ CRITICAL REQUIREMENT: firestore.indexes.json**
+
+The `firestore.indexes.json` file **MUST exist** in the repository root for deployment to succeed:
+
+- **Without this file**: `deploy_full.sh` will **fail immediately** with a clear error message
+- **Purpose**: Defines all 8 required composite indexes for Firestore queries
+- **Location**: Repository root (same directory as deploy_full.sh)
+- **Format**: Firebase-compatible JSON configuration file
+
+**If the file is missing**:
+```bash
+# Option 1: View required indexes
+python3 create_firestore_indexes.py --project-id YOUR_PROJECT_ID
+
+# Option 2: Use the existing template
+# The file should already exist in the repository
+# If missing, restore from git history or recreate from the index definitions below
+```
+
+**Required Composite Indexes** (defined in `firestore.indexes.json`):
 
 1. **Organizations**: `is_active` (ASC) + `created_at` (DESC)
 2. **Organizations with filter**: `is_active` (ASC) + `plan_type` (ASC) + `created_at` (DESC)

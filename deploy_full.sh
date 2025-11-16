@@ -280,19 +280,39 @@ ensure_firestore_database() {
 deploy_firestore_indexes() {
     local project="$1"
 
-    if [[ -f "firestore.indexes.json" ]]; then
-        log_info "Deploying Firestore indexes via deploy_firestore_indexes.py (firebase method)"
-        if python3 deploy_firestore_indexes.py --project-id "$project" --method firebase; then
-            return
-        fi
-        log_warn "Firebase CLI deployment failed, attempting gcloud method"
-        python3 deploy_firestore_indexes.py --project-id "$project" --method gcloud || log_warn "Automated Firestore index deployment failed. Please run create_firestore_indexes.py manually if needed."
-    elif [[ -f "create_firestore_indexes.py" ]]; then
-        log_info "Running create_firestore_indexes.py to list required indexes"
-        python3 create_firestore_indexes.py --project-id "$project" || log_warn "Index helper script encountered an error. Create indexes manually if required."
-    else
-        log_warn "No Firestore index helper scripts found."
+    # STRICT CHECK: firestore.indexes.json must exist
+    if [[ ! -f "firestore.indexes.json" ]]; then
+        echo ""
+        log_error "DEPLOYMENT FAILED: firestore.indexes.json not found"
+        echo ""
+        echo "Firestore composite indexes are REQUIRED for this application to function."
+        echo "The firestore.indexes.json file is missing from the repository root."
+        echo ""
+        echo "Why this is required:"
+        echo "  - Firestore queries with filters + ordering require composite indexes"
+        echo "  - Without indexes, API endpoints will fail with 'index required' errors"
+        echo "  - The application cannot function properly in production"
+        echo ""
+        echo "How to fix this:"
+        echo "  1. Ensure firestore.indexes.json exists in the repository root"
+        echo "  2. If missing, run: python3 create_firestore_indexes.py --project-id $project"
+        echo "     This will show the required index definitions"
+        echo "  3. Create firestore.indexes.json with the index configurations"
+        echo "  4. Commit the file to the repository"
+        echo ""
+        echo "For more information, see CLAUDE.md deployment documentation"
+        echo ""
+        exit 1
     fi
+
+    # Deploy indexes using the configuration file
+    log_info "Deploying Firestore indexes via deploy_firestore_indexes.py (firebase method)"
+    if python3 deploy_firestore_indexes.py --project-id "$project" --method firebase; then
+        return
+    fi
+
+    log_warn "Firebase CLI deployment failed, attempting gcloud method"
+    python3 deploy_firestore_indexes.py --project-id "$project" --method gcloud || exit_with_error "Firestore index deployment failed. Check the error messages above."
 }
 
 build_and_push_image() {
