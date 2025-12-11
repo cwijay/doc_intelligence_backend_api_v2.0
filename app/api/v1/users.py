@@ -516,13 +516,13 @@ async def get_user_stats(
         }
 
         # Count users with recent activity (logged in recently)
-        from datetime import datetime, timedelta
+        from datetime import datetime, timedelta, timezone
 
-        recent_cutoff = datetime.utcnow() - timedelta(days=30)
+        recent_cutoff = datetime.now(timezone.utc) - timedelta(days=30)
         recent_activity_count = 0
         for user in all_users.users:
             if user.is_active and user.last_login is not None:
-                # Handle potential string datetime values from Firestore
+                # Handle potential string datetime values
                 if isinstance(user.last_login, str):
                     try:
                         user_last_login = datetime.fromisoformat(user.last_login)

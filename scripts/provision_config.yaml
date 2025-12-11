@@ -1,0 +1,141 @@
+# =============================================================================
+# GCP Resource Provisioning Configuration
+# =============================================================================
+# This file is used by scripts/provision_all.py for non-interactive setup.
+#
+# Usage:
+#   uv run python scripts/provision_all.py --config scripts/provision_config.yaml --non-interactive
+#
+# Copy this file and customize for your environment:
+#   cp scripts/provision_config.yaml scripts/provision_config.production.yaml
+# =============================================================================
+
+# GCP Project Configuration
+# -------------------------
+project_id: "your-project-id"           # Required: Your GCP project ID
+region: "us-central1"                    # GCP region for resources
+
+# Cloud SQL Configuration
+# -----------------------
+cloud_sql:
+  instance_name: "doc-intelligence-db"   # Cloud SQL instance name
+  tier: "db-f1-micro"                    # Instance tier (see options below)
+  database_version: "POSTGRES_15"        # PostgreSQL version
+  database_name: "doc_intelligence"      # Database name to create
+  database_user: "postgres"              # Database user
+  # Note: Password is generated automatically and stored in Secret Manager
+
+  # Instance Tier Options:
+  # - db-f1-micro: Shared core, 0.6 GB RAM (development only, cheapest)
+  # - db-g1-small: Shared core, 1.7 GB RAM (light production)
+  # - db-custom-1-3840: 1 vCPU, 3.75 GB RAM (recommended for production)
+  # - db-custom-2-7680: 2 vCPU, 7.5 GB RAM (high traffic)
+  # - db-custom-4-15360: 4 vCPU, 15 GB RAM (enterprise)
+
+  # Storage Configuration
+  storage_type: "SSD"                    # SSD or HDD
+  storage_size_gb: 10                    # Initial storage size
+  storage_auto_increase: true            # Auto-increase storage when full
+
+  # Network Configuration
+  assign_public_ip: true                 # Assign public IP (for development)
+  authorized_networks: "0.0.0.0/0"       # Allowed IPs (DEVELOPMENT ONLY!)
+  # For production, use:
+  # authorized_networks: ""              # No public access
+  # private_network: "projects/{project}/global/networks/{vpc}"
+
+# Cloud Storage Configuration
+# ---------------------------
+storage:
+  bucket_name: "${project_id}-document-store"  # Bucket name (must be globally unique)
+  storage_class: "STANDARD"              # STANDARD, NEARLINE, COLDLINE, ARCHIVE
+  location: "${region}"                  # Bucket location
+  versioning: true                       # Enable object versioning
+  lifecycle_rules:
+    - action: "Delete"
+      condition:
+        num_newer_versions: 5            # Keep last 5 versions
+
+  # Folder structure (created for testing)
+  test_folders:
+    - "test-org/original/test-folder/"
+    - "test-org/parsed/test-folder/"
+    - "test-org/bm-25/test-folder/"
+
+# Service Account Configuration
+# -----------------------------
+service_account:
+  name: "document-intelligence-api-sa"   # Service account name
+  display_name: "Document Intelligence API Service Account"
+  create_key: false                       # Create JSON key file (for local dev)
+  key_output_path: "credentials.json"    # Key file output path
+
+  # IAM Roles to assign
+  roles:
+    - "roles/cloudsql.client"            # Cloud SQL access
+    - "roles/storage.objectAdmin"        # GCS bucket access
+    - "roles/logging.logWriter"          # Cloud Logging
+    - "roles/run.invoker"                # Cloud Run invocation
+    - "roles/secretmanager.secretAccessor"  # Secret Manager access
+
+# Secret Manager Configuration
+# ----------------------------
+secrets:
+  use_secret_manager: true               # Store secrets in Secret Manager
+
+  # Secrets to create (values auto-generated if not provided)
+  secrets_to_create:
+    - name: "DATABASE_PASSWORD"
+      description: "PostgreSQL database password"
+      length: 32
+
+    - name: "JWT_SECRET_KEY"
+      description: "JWT signing secret key"
+      length: 64
+
+    - name: "REFRESH_SECRET_KEY"
+      description: "Refresh token signing secret key"
+      length: 64
+
+# Environment File Generation
+# ---------------------------
+generate_env:
+  enabled: true                          # Generate .env file after provisioning
+  output_path: ".env"                    # Output file path
+  include_secrets: true                  # Include secret values in .env
+  environment: "development"             # Environment type
+
+# Provisioning Options
+# --------------------
+options:
+  skip_if_exists: true                   # Skip resources that already exist
+  verify_after_create: true              # Verify resources after creation
+  cleanup_on_failure: false              # Delete resources if provisioning fails
+  dry_run: false                         # Preview actions without executing
+
+# =============================================================================
+# Production Configuration Example
+# =============================================================================
+# For production, create a separate file (provision_config.production.yaml):
+#
+# project_id: "your-production-project"
+# region: "us-central1"
+#
+# cloud_sql:
+#   instance_name: "doc-intelligence-db-prod"
+#   tier: "db-custom-1-3840"
+#   authorized_networks: ""              # No public access
+#   # Enable private IP via VPC
+#
+# storage:
+#   bucket_name: "your-company-documents-prod"
+#   storage_class: "STANDARD"
+#
+# service_account:
+#   create_key: false                    # Use Workload Identity in Cloud Run
+#
+# generate_env:
+#   output_path: ".env.production"
+#   include_secrets: false               # Use Secret Manager in Cloud Run
+#   environment: "production"
+# =============================================================================

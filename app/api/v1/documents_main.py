@@ -7,9 +7,7 @@ following SOLID principles by organizing functionality into focused sub-modules:
 - document_upload.py: Document upload operations
 - document_management.py: CRUD operations (list, get, update, delete)
 - document_download.py: Download URL generation and redirects
-- document_processing.py: Parsing, summarization, and content processing
-- document_ai_content.py: AI-generated content management
-- document_sync.py: Sync validation and Firestore-first queries
+- document_sync.py: Sync validation and database queries
 - common.py: Shared utilities and dependencies
 
 Each sub-module follows the Single Responsibility Principle and provides
@@ -22,13 +20,7 @@ from fastapi import APIRouter, status
 from app.api.v1.documents_modules.document_upload import router as upload_router
 from app.api.v1.documents_modules.document_management import router as management_router
 from app.api.v1.documents_modules.document_download import router as download_router
-from app.api.v1.documents_modules.document_processing import router as processing_router
 from app.api.v1.documents_modules.document_sync import router as sync_router
-from app.api.v1.documents_modules.document_summarization import (
-    router as summarization_router,
-)
-from app.api.v1.documents_modules.document_faq import router as faq_router
-from app.api.v1.documents_modules.document_questions import router as questions_router
 from app.api.v1.documents_modules.common import logger
 
 # Create main router
@@ -43,29 +35,7 @@ router.include_router(
     tags=["Document Upload"],
 )
 
-# 2. AI content routers with specific paths (must come before /{document_id})
-router.include_router(
-    summarization_router,
-    tags=["Document Summarization"],
-)
-
-router.include_router(
-    faq_router,
-    tags=["Document FAQ"],
-)
-
-router.include_router(
-    questions_router,
-    tags=["Document Questions"],
-)
-
-# 3. Other specific path routers
-router.include_router(
-    processing_router,
-    tags=["Document Processing"],
-)
-
-
+# 2. Sync router with specific paths (must come before /{document_id})
 router.include_router(
     sync_router,
     tags=["Document Sync"],
@@ -76,7 +46,7 @@ router.include_router(
     tags=["Document Download"],
 )
 
-# 4. Generic path parameter routes (MUST BE LAST - has /{document_id})
+# 3. Generic path parameter routes (MUST BE LAST - has /{document_id})
 router.include_router(
     management_router,
     tags=["Document Management"],
@@ -87,7 +57,7 @@ router.include_router(
 @router.get(
     "/health",
     include_in_schema=False,
-    summary="🏥 Document Service Health Check",
+    summary="Document Service Health Check",
     description="Health check for document service and dependencies.",
 )
 async def documents_health_check():
@@ -96,33 +66,29 @@ async def documents_health_check():
 
     Checks the status of:
     - Google Cloud Storage connectivity
-    - Firestore database connectivity
+    - PostgreSQL database connectivity
     - Overall service health
     """
     try:
         from app.core.gcs_client import gcs_client
-        from app.core.firebase_client import firebase_client
+        from app.core.db_client import db
+
+        # Check database connection
+        db_healthy = await db.test_connection(timeout=5.0)
 
         health_status = {
             "status": "healthy",
-            "timestamp": "2025-01-01T00:00:00Z",  # Will be updated in production
             "service": "document-intelligence-api",
             "version": "1.0.0",
             "components": {
                 "gcs": gcs_client.health_check() if gcs_client else False,
-                "firestore": (
-                    firebase_client.health_check() if firebase_client else False
-                ),
+                "postgresql": db_healthy,
             },
             "endpoints": {
-                "upload": "✅ Available",
-                "management": "✅ Available",
-                "download": "✅ Available",
-                "processing": "✅ Available",
-                "ai_content": "✅ Available",
-                "sync": "✅ Available",
-                "summarization": "✅ Available",
-                "faq": "✅ Available",
+                "upload": "Available",
+                "management": "Available",
+                "download": "Available",
+                "sync": "Available",
             },
         }
 
@@ -132,42 +98,22 @@ async def documents_health_check():
             health_status["status"] = "degraded"
             health_status["endpoints"] = {
                 "upload": (
-                    "⚠️ Limited"
+                    "Limited"
                     if not health_status["components"]["gcs"]
-                    else "✅ Available"
+                    else "Available"
                 ),
                 "management": (
-                    "⚠️ Limited"
-                    if not health_status["components"]["firestore"]
-                    else "✅ Available"
+                    "Limited"
+                    if not health_status["components"]["postgresql"]
+                    else "Available"
                 ),
                 "download": (
-                    "⚠️ Limited"
+                    "Limited"
                     if not health_status["components"]["gcs"]
-                    else "✅ Available"
+                    else "Available"
                 ),
-                "processing": "⚠️ Limited" if not all_healthy else "✅ Available",
-                "ai_content": (
-                    "⚠️ Limited"
-                    if not health_status["components"]["firestore"]
-                    else "✅ Available"
-                ),
-                "sync": "⚠️ Limited" if not all_healthy else "✅ Available",
-                "summarization": (
-                    "⚠️ Limited"
-                    if not health_status["components"]["firestore"]
-                    else "✅ Available"
-                ),
-                "faq": (
-                    "⚠️ Limited"
-                    if not health_status["components"]["firestore"]
-                    else "✅ Available"
-                ),
+                "sync": "Limited" if not all_healthy else "Available",
             }
-
-        status_code = (
-            status.HTTP_200_OK if all_healthy else status.HTTP_503_SERVICE_UNAVAILABLE
-        )
 
         return health_status
 
@@ -177,17 +123,12 @@ async def documents_health_check():
             "status": "unhealthy",
             "service": "document-intelligence-api",
             "error": str(e),
-            "timestamp": "2025-01-01T00:00:00Z",
-            "components": {"gcs": False, "firestore": False},
+            "components": {"gcs": False, "postgresql": False},
             "endpoints": {
-                "upload": "❌ Unavailable",
-                "management": "❌ Unavailable",
-                "download": "❌ Unavailable",
-                "processing": "❌ Unavailable",
-                "ai_content": "❌ Unavailable",
-                "sync": "❌ Unavailable",
-                "summarization": "❌ Unavailable",
-                "faq": "❌ Unavailable",
+                "upload": "Unavailable",
+                "management": "Unavailable",
+                "download": "Unavailable",
+                "sync": "Unavailable",
             },
         }
 
@@ -250,43 +191,15 @@ async def documents_info():
                     "Download security",
                 ],
             },
-            "document_processing": {
-                "description": "Document parsing and AI processing",
-                "endpoints": [
-                    "POST /parse",
-                    "GET /parse/{storage_path:path}",
-                    "POST /save-parsed",
-                    "POST /summarize/{filename}",
-                ],
-                "responsibilities": [
-                    "LlamaParse document parsing",
-                    "Parsed content management",
-                    "AI-powered summarization",
-                    "Processing workflow orchestration",
-                ],
-            },
-            "document_ai_content": {
-                "description": "AI-generated content management",
-                "endpoints": [
-                    "GET /{document_id}/ai-content",
-                    "PATCH /{document_id}/ai-content",
-                ],
-                "responsibilities": [
-                    "AI content retrieval",
-                    "Content updates and validation",
-                    "FAQ and question management",
-                    "AI content metadata tracking",
-                ],
-            },
             "document_sync": {
-                "description": "Sync validation and Firestore-first queries",
+                "description": "Sync validation and database queries",
                 "endpoints": [
                     "GET /sync/validate",
-                    "GET /firestore/by-filename/{filename}",
-                    "GET /firestore/by-folder-name/{folder_name}",
+                    "GET /by-filename/{filename}",
+                    "GET /by-folder-name/{folder_name}",
                 ],
                 "responsibilities": [
-                    "Firestore-GCS sync validation",
+                    "PostgreSQL-GCS sync validation",
                     "Database-first document queries",
                     "Folder-based document listing",
                     "Data consistency monitoring",
@@ -316,8 +229,8 @@ async def documents_info():
             "Comprehensive documentation per module",
             "Easier onboarding for new developers",
         ],
-        "total_endpoints": 17,
+        "total_endpoints": 10,
         "original_file_size": "2,820 lines",
-        "refactored_structure": "7 focused modules + 1 aggregator",
+        "refactored_structure": "5 focused modules + 1 aggregator",
         "documentation": "Each module includes comprehensive docstrings and API documentation",
     }

@@ -1,8 +1,8 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Dict, Any, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, field_serializer
 
 
 class PlanType(str, Enum):
@@ -14,12 +14,10 @@ class PlanType(str, Enum):
 
 
 class Organization(BaseModel):
-    """Organization Firestore model for multi-tenancy."""
+    """Organization model for multi-tenancy."""
 
-    # Primary key - Firestore document ID (managed by Firestore)
-    id: Optional[str] = Field(
-        None, description="Unique organization identifier (Firestore document ID)"
-    )
+    # Primary key
+    id: Optional[str] = Field(None, description="Unique organization identifier")
 
     # Core fields
     name: str = Field(..., description="Organization name (must be unique)")
@@ -42,20 +40,20 @@ class Organization(BaseModel):
 
     # Timestamps
     created_at: datetime = Field(
-        default_factory=datetime.utcnow, description="When organization was created"
+        default_factory=lambda: datetime.now(timezone.utc),
+        description="When organization was created",
     )
     updated_at: datetime = Field(
-        default_factory=datetime.utcnow,
+        default_factory=lambda: datetime.now(timezone.utc),
         description="When organization was last updated",
     )
 
-    class Config:
-        """Pydantic configuration."""
+    model_config = ConfigDict(use_enum_values=True)
 
-        use_enum_values = True
-        json_encoders = {
-            datetime: lambda dt: dt.isoformat(),
-        }
+    @field_serializer("created_at", "updated_at")
+    def serialize_datetime(self, value: datetime) -> str:
+        """Serialize datetime fields to ISO format."""
+        return value.isoformat() if value else None
 
     def __repr__(self) -> str:
         return (
@@ -63,9 +61,9 @@ class Organization(BaseModel):
         )
 
     def to_dict(self) -> Dict[str, Any]:
-        """Convert organization to dictionary for Firestore."""
+        """Convert organization to dictionary for database storage."""
         data = self.model_dump(exclude={"id"})
-        # Convert datetime objects to ISO format for Firestore
+        # Convert datetime objects to ISO format
         if "created_at" in data:
             data["created_at"] = self.created_at.isoformat()
         if "updated_at" in data:
@@ -76,7 +74,7 @@ class Organization(BaseModel):
     def from_dict(
         cls, data: Dict[str, Any], doc_id: Optional[str] = None
     ) -> "Organization":
-        """Create Organization from Firestore document data."""
+        """Create Organization from database record."""
         # Handle datetime parsing
         if "created_at" in data and isinstance(data["created_at"], str):
             data["created_at"] = datetime.fromisoformat(data["created_at"])
@@ -101,4 +99,4 @@ class Organization(BaseModel):
 
     def update_timestamp(self):
         """Update the updated_at timestamp."""
-        self.updated_at = datetime.utcnow()
+        self.updated_at = datetime.now(timezone.utc)

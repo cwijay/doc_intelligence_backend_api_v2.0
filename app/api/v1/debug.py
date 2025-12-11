@@ -8,18 +8,20 @@ from typing import Dict, Any, Optional
 from fastapi import APIRouter, HTTPException, status, Query, Depends
 from pydantic import BaseModel, Field
 
+from sqlalchemy import select, func
+
 from app.core.config import settings
-from app.core.firebase_client import firebase_manager, get_collection
+from app.core.db_client import db
+from app.core.db_models import OrganizationModel, UserModel
 from app.core.logging import get_service_logger
 from app.services.user_service import user_service
 from app.services.org_service import organization_service
-from google.cloud.firestore import FieldFilter
 
 logger = get_service_logger("debug")
 
 router = APIRouter(
     prefix="/debug",
-    tags=["🔧 Debug"],
+    tags=["Debug"],
     responses={404: {"description": "Not found"}},
 )
 
@@ -43,11 +45,11 @@ class UserExistsResponse(BaseModel):
     is_active: Optional[bool] = Field(None, description="Whether user is active")
 
 
-class FirestoreStatusResponse(BaseModel):
-    """Response for Firestore status check."""
+class DatabaseStatusResponse(BaseModel):
+    """Response for database status check."""
 
-    initialized: bool = Field(..., description="Whether Firebase is initialized")
-    can_connect: bool = Field(..., description="Whether we can connect to Firestore")
+    initialized: bool = Field(..., description="Whether database is initialized")
+    can_connect: bool = Field(..., description="Whether we can connect to database")
     organizations_count: Optional[int] = Field(
         None, description="Number of organizations"
     )
@@ -56,92 +58,85 @@ class FirestoreStatusResponse(BaseModel):
 
 
 def check_debug_access():
-    """Check if debug endpoints are accessible."""
-    if settings.ENVIRONMENT == "production":
-        # Allow debug in production only if explicitly enabled
-        if not os.environ.get("ENABLE_DEBUG_ENDPOINTS", "").lower() == "true":
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Debug endpoints not available in production",
-            )
+    """Check if debug endpoints are accessible.
+
+    SECURITY: Debug endpoints are ONLY available in development mode.
+    No override is allowed to prevent accidental exposure in production.
+    """
+    if not settings.is_development:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Not found",
+        )
 
 
 @router.get(
-    "/firestore-status",
-    response_model=FirestoreStatusResponse,
-    summary="🔍 Check Firestore Connection Status",
-    description="Check if Firebase/Firestore is properly initialized and accessible.",
+    "/database-status",
+    response_model=DatabaseStatusResponse,
+    summary="Check Database Connection Status",
+    description="Check if PostgreSQL is properly initialized and accessible.",
 )
-async def check_firestore_status(
+async def check_database_status(
     _: None = Depends(check_debug_access),
-) -> FirestoreStatusResponse:
-    """Check Firestore connection and basic functionality."""
+) -> DatabaseStatusResponse:
+    """Check database connection and basic functionality."""
     try:
-        logger.info("Checking Firestore status")
+        logger.info("Checking database status")
 
-        # Check initialization
-        initialized = firebase_manager.is_initialized
+        # Check connection
+        can_connect = await db.test_connection()
 
-        if not initialized:
-            return FirestoreStatusResponse(
-                initialized=False, can_connect=False, error="Firebase not initialized"
+        if not can_connect:
+            return DatabaseStatusResponse(
+                initialized=False, can_connect=False, error="Database connection failed"
             )
 
-        # Try to connect and count organizations
+        # Count organizations and users
         try:
-            orgs_collection = get_collection("organizations")
-            orgs_query = orgs_collection.where(
-                filter=FieldFilter("is_active", "==", True)
-            )
-            orgs_docs = orgs_query.stream()
-
-            org_count = 0
-            total_users = 0
-
-            async for org_doc in orgs_docs:
-                org_count += 1
-                org_id = org_doc.id
-
-                # Count users in this organization
-                try:
-                    users_collection = get_collection("users")
-                    users_query = users_collection.where(
-                        filter=FieldFilter("org_id", "==", org_id)
+            async with db.session() as session:
+                # Count organizations
+                org_count_result = await session.execute(
+                    select(func.count(OrganizationModel.id)).where(
+                        OrganizationModel.is_active == True
                     )
-                    users_docs = users_query.stream()
+                )
+                org_count = org_count_result.scalar() or 0
 
-                    async for user_doc in users_docs:
-                        total_users += 1
-                except Exception as user_error:
-                    logger.warning(
-                        f"Error counting users in org {org_id}: {user_error}"
+                # Count users
+                user_count_result = await session.execute(
+                    select(func.count(UserModel.id)).where(
+                        UserModel.is_active == True
                     )
+                )
+                user_count = user_count_result.scalar() or 0
 
-            return FirestoreStatusResponse(
-                initialized=True,
-                can_connect=True,
-                organizations_count=org_count,
-                users_count=total_users,
-            )
+                return DatabaseStatusResponse(
+                    initialized=True,
+                    can_connect=True,
+                    organizations_count=org_count,
+                    users_count=user_count,
+                )
 
         except Exception as e:
-            return FirestoreStatusResponse(
+            return DatabaseStatusResponse(
                 initialized=True,
                 can_connect=False,
-                error=f"Connection failed: {str(e)}",
+                error=f"Query failed: {str(e)}",
             )
 
     except Exception as e:
-        logger.error(f"Error checking Firestore status: {str(e)}")
-        return FirestoreStatusResponse(
+        logger.error(f"Error checking database status: {str(e)}")
+        return DatabaseStatusResponse(
             initialized=False, can_connect=False, error=str(e)
         )
+
+
 
 
 @router.get(
     "/user-exists/{email}",
     response_model=UserExistsResponse,
-    summary="👤 Check User Existence",
+    summary="Check User Existence",
     description="Check if a user exists in the database across all organizations.",
 )
 async def check_user_exists(
@@ -185,7 +180,7 @@ async def check_user_exists(
 @router.get(
     "/organizations",
     response_model=DebugResponse,
-    summary="🏢 List Organizations",
+    summary="List Organizations",
     description="List all organizations in the database for debugging.",
 )
 async def list_organizations_debug(
@@ -230,7 +225,7 @@ async def list_organizations_debug(
 @router.get(
     "/users",
     response_model=DebugResponse,
-    summary="👥 List Users",
+    summary="List Users",
     description="List users from a specific organization for debugging.",
 )
 async def list_users_debug(
@@ -278,7 +273,7 @@ async def list_users_debug(
 @router.post(
     "/test-password",
     response_model=DebugResponse,
-    summary="🔐 Test Password Verification",
+    summary="Test Password Verification",
     description="Test password verification for debugging authentication issues.",
 )
 async def test_password_verification(
@@ -325,23 +320,25 @@ async def test_password_verification(
 @router.get(
     "/environment",
     response_model=DebugResponse,
-    summary="🌍 Environment Information",
+    summary="Environment Information",
     description="Get environment and configuration information.",
 )
 async def get_environment_info(_: None = Depends(check_debug_access)) -> DebugResponse:
     """Get environment information for debugging."""
     try:
+        db_connected = await db.test_connection()
+
         env_info = {
             "environment": settings.ENVIRONMENT,
             "debug": settings.DEBUG,
-            "firebase_project_id": settings.FIREBASE_PROJECT_ID,
             "gcp_project_id": settings.GCP_PROJECT_ID,
+            "database_connected": db_connected,
+            "use_cloud_sql_connector": settings.USE_CLOUD_SQL_CONNECTOR,
             "cors_origins": settings.resolved_cors_origins,
             "log_level": settings.LOG_LEVEL,
             "jwt_algorithm": settings.JWT_ALGORITHM,
             "access_token_expire_minutes": settings.access_token_expire_minutes,
             "python_version": os.sys.version,
-            "firebase_initialized": firebase_manager.is_initialized,
         }
 
         return DebugResponse(

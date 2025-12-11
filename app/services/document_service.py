@@ -12,11 +12,10 @@ SOLID principles into focused services:
 - DocumentStorageService: GCS operations and storage management
 - DocumentService: Main orchestration facade (this file)
 
-Additional services will be added incrementally:
+Additional services:
 - DocumentCrudService: Basic CRUD operations
 - DocumentQueryService: Complex queries and filtering
-- DocumentAIService: AI content management
-- DocumentSyncService: Firestore-GCS synchronization
+- DocumentSyncService: PostgreSQL-GCS synchronization
 - DocumentDownloadService: Download URL generation
 
 This facade ensures all existing imports continue to work while the underlying

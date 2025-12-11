@@ -1,6 +1,6 @@
 from typing import List, Optional
-from pydantic import Field
-from pydantic_settings import BaseSettings
+from pydantic import Field, field_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -19,9 +19,20 @@ class Settings(BaseSettings):
 
     # JWT Configuration - Enterprise Security Settings
     JWT_SECRET_KEY: str = Field(
-        ..., description="Secret key for JWT tokens - must be cryptographically secure"
+        ..., description="Secret key for JWT tokens - must be cryptographically secure (min 32 chars)"
     )
     JWT_ALGORITHM: str = "HS256"
+
+    @field_validator("JWT_SECRET_KEY")
+    @classmethod
+    def validate_jwt_secret_key(cls, v: str) -> str:
+        """Validate JWT secret key has minimum length for security."""
+        if len(v) < 32:
+            raise ValueError(
+                "JWT_SECRET_KEY must be at least 32 characters long for security. "
+                "Generate a secure key with: python -c \"import secrets; print(secrets.token_hex(32))\""
+            )
+        return v
 
     # Access Token Configuration
     ACCESS_TOKEN_EXPIRE_MINUTES: int = Field(
@@ -77,26 +88,44 @@ class Settings(BaseSettings):
         default=60, description="Maximum authentication attempts per minute per IP"
     )
 
-    # Firebase/Firestore Configuration
-    FIREBASE_PROJECT_ID: Optional[str] = None
-    FIREBASE_DATABASE_ID: Optional[str] = (
-        None  # Firestore database ID (default: "(default)")
-    )
-    FIREBASE_SERVICE_ACCOUNT_JSON: Optional[str] = (
-        None  # JSON string of service account
-    )
-    GOOGLE_APPLICATION_CREDENTIALS: Optional[str] = None  # Path to service account file
+    # PostgreSQL/Cloud SQL Configuration
+    DATABASE_URL: Optional[str] = None  # Full connection URL (for local dev)
+    DATABASE_NAME: str = "doc_intelligence"
+    DATABASE_USER: str = "postgres"
+    DATABASE_PASSWORD: str = ""
+    DATABASE_HOST: str = "localhost"
+    DATABASE_PORT: int = 5432
+    CLOUD_SQL_INSTANCE: Optional[str] = None  # e.g., project:region:instance
+    USE_CLOUD_SQL_CONNECTOR: bool = False
+    CLOUD_SQL_IP_TYPE: str = "PRIVATE"  # PRIVATE or PUBLIC
+
+    # Connection Pool Settings - increased for production workloads
+    DB_POOL_SIZE: int = 10  # Base connections per event loop
+    DB_MAX_OVERFLOW: int = 20  # Additional connections under load
+    DB_POOL_TIMEOUT: int = 30
+    DB_POOL_RECYCLE: int = 1800  # 30 minutes
+    DB_ECHO: bool = False  # SQL query logging
 
     # Google Cloud Platform Configuration
     GCP_PROJECT_ID: Optional[str] = None
+    GOOGLE_APPLICATION_CREDENTIALS: Optional[str] = None  # Path to service account file
     GCS_BUCKET_NAME: str = "biz-to-bricks-document-store"
     DOCUMENT_STORE_BASE_PATH: str = ""  # Base path within bucket (empty for root)
 
     # Document Configuration
     MAX_FILE_SIZE: int = 50 * 1024 * 1024  # 50MB in bytes
     ALLOWED_FILE_TYPES: List[str] = ["pdf", "xlsx"]
+
     DOCUMENT_UPLOAD_TIMEOUT: int = 300  # 5 minutes in seconds
     SIGNED_URL_EXPIRATION_MINUTES: int = 60  # Default signed URL expiration
+
+    @field_validator("ALLOWED_FILE_TYPES", mode="before")
+    @classmethod
+    def parse_allowed_file_types(cls, v):
+        """Parse ALLOWED_FILE_TYPES from comma-separated string or JSON array."""
+        if isinstance(v, str) and not v.startswith("["):
+            return [x.strip() for x in v.split(",")]
+        return v
 
     # CORS Settings - Environment-specific configuration
     CORS_ORIGINS: List[str] = [
@@ -145,26 +174,15 @@ class Settings(BaseSettings):
     FRONTEND_CLOUD_RUN_URL: Optional[str] = None
     FRONTEND_SERVICE_NAME: Optional[str] = None
 
-    # AI/ML Configuration
-    OPENAI_API_KEY: Optional[str] = None
-    OPENAI_MODEL: str = "gpt-5-mini"  # OpenAI model to use for AI operations
-
-    # Document Processing Configuration
-    LLAMAPARSE_API_KEY: Optional[str] = None
-
-    # Vector Database Configuration
-    PINECONE_API_KEY: Optional[str] = None
-    PINECONE_ENVIRONMENT: Optional[str] = None
-    PINECONE_INDEX_NAME: str = "document-intelligence"
-
     # Logging Configuration
     LOG_LEVEL: str = "INFO"
-    LOG_FORMAT: str = "json"  # json or text
+    LOG_FORMAT: str = "text"  # json or text
 
-    class Config:
-        env_file = ".env"
-        case_sensitive = True
-        extra = "ignore"
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        case_sensitive=True,
+        extra="ignore",
+    )
 
     @property
     def resolved_cors_origins(self) -> List[str]:
@@ -172,8 +190,12 @@ class Settings(BaseSettings):
         import json
         import os
 
-        # Start with default origins
-        origins = list(self.CORS_ORIGINS)
+        # In production, do NOT start with localhost defaults for security
+        if self.is_production:
+            origins = []
+        else:
+            # In development, start with default origins
+            origins = list(self.CORS_ORIGINS)
 
         # Add additional CORS origins from environment
         if self.ADDITIONAL_CORS_ORIGINS:
@@ -244,40 +266,11 @@ class Settings(BaseSettings):
             if service_name and revision:
                 # Cloud Run URL pattern for backend
                 region = os.getenv("GCP_REGION", "us-central1")
-                project_id = self.GCP_PROJECT_ID or self.FIREBASE_PROJECT_ID
-                if project_id:
+                if self.GCP_PROJECT_ID:
                     cloud_run_url = (
                         f"https://{service_name}-{revision[:8]}-{region}.a.run.app"
                     )
                     origins.append(cloud_run_url)
-
-            # Auto-detect frontend Cloud Run URL pattern
-            if self.FRONTEND_SERVICE_NAME:
-                region = os.getenv("GCP_REGION", "us-central1")
-                project_id = self.GCP_PROJECT_ID or self.FIREBASE_PROJECT_ID
-                if project_id:
-                    # Try to detect frontend URL using same project hash pattern
-                    # This assumes frontend follows similar naming: {service-name}-{hash}.{region}.a.run.app
-                    frontend_pattern_url = (
-                        f"https://{self.FRONTEND_SERVICE_NAME}-*-{region}.a.run.app"
-                    )
-                    # For now, we'll add the explicit URL since wildcard patterns aren't supported in CORS
-                    # but we'll log this for debugging
-                    if hasattr(self, "_log_frontend_pattern"):
-                        import logging
-
-                        logging.getLogger(__name__).info(
-                            f"Frontend pattern would be: {frontend_pattern_url}"
-                        )
-
-                    # If we have a specific hash/number, we could construct the full URL
-                    # For the known frontend, extract the hash from FRONTEND_CLOUD_RUN_URL
-                    if (
-                        self.FRONTEND_CLOUD_RUN_URL
-                        and self.FRONTEND_SERVICE_NAME in self.FRONTEND_CLOUD_RUN_URL
-                    ):
-                        # Already added above, so skip duplicate
-                        pass
 
         # In development, add wildcard localhost support for maximum compatibility
         if self.is_development:
@@ -306,11 +299,6 @@ class Settings(BaseSettings):
                 unique_origins.append(origin)
 
         return unique_origins
-
-    @property
-    def firebase_database_id(self) -> str:
-        """Get Firebase database ID."""
-        return self.FIREBASE_DATABASE_ID or "(default)"
 
     @property
     def is_development(self) -> bool:

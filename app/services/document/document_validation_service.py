@@ -11,7 +11,7 @@ This service handles all validation aspects of document management:
 
 import mimetypes
 from typing import Tuple, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 from fastapi import UploadFile
 
 from app.models.document import Document, DocumentStatus, FileType
@@ -265,7 +265,7 @@ class DocumentValidationService(DocumentBaseService):
                 or document.created_at is None
                 or str(document.created_at).lower() in ["null", "undefined"]
             ):
-                document.created_at = datetime.utcnow()
+                document.created_at = datetime.now(timezone.utc)
 
             # BULLETPROOF updated_at - never null/invalid
             if (
@@ -274,7 +274,7 @@ class DocumentValidationService(DocumentBaseService):
                 or document.updated_at is None
                 or str(document.updated_at).lower() in ["null", "undefined"]
             ):
-                document.updated_at = document.created_at or datetime.utcnow()
+                document.updated_at = document.created_at or datetime.now(timezone.utc)
 
             # BULLETPROOF status - never null/empty
             if (
@@ -344,8 +344,8 @@ class DocumentValidationService(DocumentBaseService):
             document.file_type = FileType.PDF
             document.filename = "unknown_file.pdf"
             document.original_filename = "unknown_file.pdf"
-            document.created_at = datetime.utcnow()
-            document.updated_at = datetime.utcnow()
+            document.created_at = datetime.now(timezone.utc)
+            document.updated_at = datetime.now(timezone.utc)
             document.status = DocumentStatus.UPLOADED
             document.storage_path = (
                 "unknown_org/original/unknown_folder/unknown_file.pdf"

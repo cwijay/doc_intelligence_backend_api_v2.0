@@ -10,7 +10,7 @@ This service handles secure document access and download operations:
 """
 
 from typing import List, Dict, Any, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from app.models.schemas import DocumentDownloadResponse
 from app.core.gcs_client import gcs_client, GCSClientError
@@ -271,7 +271,7 @@ class DocumentDownloadService(DocumentBaseService):
                     else 0
                 ),
                 "expiration_minutes": expiration_minutes,
-                "generated_at": datetime.utcnow(),
+                "generated_at": datetime.now(timezone.utc),
             }
 
         except DocumentValidationError:
@@ -362,7 +362,7 @@ class DocumentDownloadService(DocumentBaseService):
                 "filename": document.filename,
                 "file_size": document.file_size,
                 "storage_path": document.storage_path,
-                "validated_at": datetime.utcnow(),
+                "validated_at": datetime.now(timezone.utc),
             }
 
         except Exception as e:
@@ -424,10 +424,10 @@ class DocumentDownloadService(DocumentBaseService):
             # In a real system, this would query download logs or metrics storage
 
             if start_date is None:
-                start_date = datetime.utcnow() - timedelta(days=30)
+                start_date = datetime.now(timezone.utc) - timedelta(days=30)
 
             if end_date is None:
-                end_date = datetime.utcnow()
+                end_date = datetime.now(timezone.utc)
 
             # This would be replaced with actual metrics queries
             placeholder_stats = {
@@ -451,7 +451,7 @@ class DocumentDownloadService(DocumentBaseService):
                     "most_common_file_type": "Not available",
                 },
                 "note": "Download statistics require implementation of download logging system",
-                "generated_at": datetime.utcnow(),
+                "generated_at": datetime.now(timezone.utc),
             }
 
             self.logger.info(
@@ -471,5 +471,5 @@ class DocumentDownloadService(DocumentBaseService):
             return {
                 "org_id": org_id,
                 "error": str(e),
-                "generated_at": datetime.utcnow(),
+                "generated_at": datetime.now(timezone.utc),
             }

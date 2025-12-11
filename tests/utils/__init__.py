@@ -1,1 +1,1 @@
-"""Test utilities package."""
+"""Test utilities and helpers."""

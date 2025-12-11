@@ -1,7 +1,7 @@
 import os
 from typing import Optional, List, Tuple, Dict, Any
 from functools import lru_cache
-from datetime import datetime
+from datetime import datetime, timezone
 
 from google.cloud import storage
 from google.cloud.storage import Bucket
@@ -59,7 +59,6 @@ class GCSClient:
         # Check if we have the minimum required configuration
         has_credentials = (
             settings.GOOGLE_APPLICATION_CREDENTIALS
-            or settings.FIREBASE_SERVICE_ACCOUNT_JSON
             or
             # Check if default credentials are available in environment
             os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
@@ -69,7 +68,7 @@ class GCSClient:
             self._check_application_default_credentials()
         )
 
-        has_project = settings.GCP_PROJECT_ID or settings.FIREBASE_PROJECT_ID
+        has_project = settings.GCP_PROJECT_ID
 
         return has_credentials and has_project
 
@@ -92,7 +91,7 @@ class GCSClient:
                     settings.GOOGLE_APPLICATION_CREDENTIALS
                 )
 
-            project_id = settings.GCP_PROJECT_ID or settings.FIREBASE_PROJECT_ID
+            project_id = settings.GCP_PROJECT_ID
             self._client = storage.Client(project=project_id)
 
             # Get or create bucket
@@ -232,11 +231,10 @@ class GCSClient:
             for folder_type in folder_types:
                 gcs_prefix = f"{org_name}/{folder_type}/{folder_path}/"
 
-                # List and delete all objects with this prefix
-                blobs = list(self.bucket.list_blobs(prefix=gcs_prefix))
+                # Use iterator pattern to avoid loading all blobs into memory
+                # Process blobs as we iterate - GCS iterator handles pagination internally
                 deleted_count = 0
-
-                for blob in blobs:
+                for blob in self.bucket.list_blobs(prefix=gcs_prefix):
                     blob.delete()
                     deleted_count += 1
 
@@ -283,11 +281,11 @@ class GCSClient:
                 old_prefix = f"{org_name}/{folder_type}/{old_path}/"
                 new_prefix = f"{org_name}/{folder_type}/{new_path}/"
 
-                # List all objects in the old path
-                blobs = list(self.bucket.list_blobs(prefix=old_prefix))
+                # Use iterator pattern to avoid loading all blobs into memory
+                # Note: For move operations, we need to be careful as we're modifying
+                # while iterating. GCS list_blobs returns a snapshot-consistent iterator.
                 moved_count = 0
-
-                for blob in blobs:
+                for blob in self.bucket.list_blobs(prefix=old_prefix):
                     # Calculate new blob name
                     old_name = blob.name
                     new_name = old_name.replace(old_prefix, new_prefix, 1)
@@ -478,7 +476,7 @@ class GCSClient:
                 raise GCSObjectNotFoundError(f"Document file not found: {storage_path}")
 
             # Calculate expiration
-            expiration = datetime.utcnow() + timedelta(minutes=expiration_minutes)
+            expiration = datetime.now(timezone.utc) + timedelta(minutes=expiration_minutes)
 
             # Generate signed URL
             signed_url = blob.generate_signed_url(

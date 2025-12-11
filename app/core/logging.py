@@ -104,12 +104,6 @@ def configure_logging() -> None:
                 "handlers": ["default"],
                 "propagate": False,
             },
-            # Suppress Firebase ADC informational warnings
-            "app.core.firebase_client": {
-                "level": "ERROR" if settings.ENVIRONMENT == "production" else "INFO",
-                "handlers": ["default"],
-                "propagate": False,
-            },
             # Suppress nest_asyncio patch messages
             "nest_asyncio": {
                 "level": "ERROR",
@@ -125,14 +119,8 @@ def configure_logging() -> None:
     logging.config.dictConfig(logging_config)
 
     # Set log levels for specific loggers based on environment
-    if settings.DEBUG:
-        # Firebase/Firestore loggers for development
-        logging.getLogger("google.cloud.firestore").setLevel(logging.INFO)
-        logging.getLogger("firebase_admin").setLevel(logging.INFO)
-    else:
+    if not settings.DEBUG:
         # Production: reduce verbosity
-        logging.getLogger("google.cloud.firestore").setLevel(logging.WARNING)
-        logging.getLogger("firebase_admin").setLevel(logging.WARNING)
         logging.getLogger("asyncio").setLevel(logging.WARNING)
         logging.getLogger("concurrent.futures").setLevel(logging.WARNING)
 
@@ -182,7 +170,7 @@ class RequestLoggingMiddleware:
         # Log request - skip health checks to reduce noise
         if not is_health_check:
             if request_info["method"] == "POST":
-                self.logger.info("🔥 POST REQUEST DETECTED", **request_info)
+                self.logger.info("POST request detected", **request_info)
             else:
                 self.logger.info("Request started", **request_info)
 

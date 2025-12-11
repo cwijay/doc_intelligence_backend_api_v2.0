@@ -256,7 +256,6 @@ async def list_documents(
 - Basic document metadata (filename, size, type, status)
 - Storage information (path, folder)
 - Processing information (status, metadata)
-- AI content (summary, FAQ, questions) if available
 - Timestamps and user information
 
 **Example Response:**
@@ -268,19 +267,7 @@ async def list_documents(
   "file_type": "pdf",
   "file_size": 1024567,
   "storage_path": "Google/original/invoices/invoice-2025-001.pdf",
-  "status": "parsed",
-  "parsed_storage_path": "Google/parsed/invoices/invoice-2025-001.txt",
-  "summary": "This invoice covers Q4 2024 services...",
-  "faq": [
-    {
-      "question": "What is the payment due date?",
-      "answer": "Payment is due within 30 days of invoice date."
-    }
-  ],
-  "questions": [
-    "What services were provided?",
-    "What is the total amount due?"
-  ],
+  "status": "uploaded",
   "metadata": {"category": "invoice", "quarter": "Q4"},
   "org_id": "oJIChgDgktkF30dAPy2c",
   "uploaded_by": "jhYXgm0s4avwacnBSXH9",
@@ -366,7 +353,7 @@ async def get_document(
 {
   "status": "parsing",
   "metadata": {
-    "parsing_engine": "llamaparse",
+    "updated_by": "system",
     "started_at": "2025-08-15T10:30:00Z"
   }
 }
@@ -485,9 +472,8 @@ async def update_document_status(
 - `document_id`: Document unique identifier
 
 **Deletion Behavior:**
-- **Firestore**: Soft delete (sets `is_active: false`)
+- **PostgreSQL**: Soft delete (sets `is_active: false`)
 - **Google Cloud Storage**: Hard delete (file permanently removed)
-- **Parsed Content**: Also removed from storage
 
 **Response Format:**
 ```json
@@ -505,9 +491,8 @@ curl -X DELETE "http://localhost:8000/api/v1/documents/123" \\
 
 **Important Notes:**
 - This operation cannot be undone
-- All associated files (original and parsed) are removed
-- Document metadata remains in Firestore for audit purposes
-- AI-generated content (summaries, FAQ) is also removed""",
+- Original files are removed from GCS
+- Document metadata remains in PostgreSQL for audit purposes""",
     responses={
         200: {
             "description": "Document deleted successfully",
@@ -546,7 +531,7 @@ async def delete_document(
     """
     Delete a document from the system.
 
-    Performs soft delete in Firestore and hard delete from GCS storage.
+    Performs soft delete in PostgreSQL and hard delete from GCS storage.
     This operation cannot be undone.
     """
     document_service = deps["document_service"]

@@ -36,9 +36,6 @@ class DatabaseError(DocumentIntelligenceError):
         super().__init__(message, "DATABASE_ERROR", details)
 
 
-# Removed FirestoreError - not using Firestore in this project
-
-
 class AuthenticationError(DocumentIntelligenceError):
     """Authentication related errors."""
 
@@ -357,14 +354,14 @@ async def document_intelligence_exception_handler(
     )
 
 
-async def firestore_exception_handler(
+async def google_api_exception_handler(
     request: Request, exc: GoogleAPIError
 ) -> JSONResponse:
-    """Handle Google Cloud Firestore errors."""
+    """Handle Google Cloud API errors (GCS, etc.)."""
     error_id = str(uuid.uuid4())[:8]
 
     logger.error(
-        "Firestore exception occurred",
+        "Google API exception occurred",
         error=str(exc),
         path=request.url.path,
         method=request.method,
@@ -372,13 +369,13 @@ async def firestore_exception_handler(
         exc_info=True,
     )
 
-    # Don't expose internal database errors in production
-    message = "Database error occurred" if settings.is_production else str(exc)
+    # Don't expose internal errors in production
+    message = "Cloud service error occurred" if settings.is_production else str(exc)
 
     return create_error_response(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         message=message,
-        error_code="DATABASE_ERROR",
+        error_code="CLOUD_SERVICE_ERROR",
         error_id=error_id,
         request_path=str(request.url.path),
     )
@@ -436,8 +433,8 @@ def setup_exception_handlers(app):
     # Validation errors
     app.add_exception_handler(RequestValidationError, validation_exception_handler)
 
-    # Database errors
-    app.add_exception_handler(GoogleAPIError, firestore_exception_handler)
+    # Google Cloud API errors (GCS, etc.)
+    app.add_exception_handler(GoogleAPIError, google_api_exception_handler)
 
     # General exception handler (catch-all)
     app.add_exception_handler(Exception, general_exception_handler)

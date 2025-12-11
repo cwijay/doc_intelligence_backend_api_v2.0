@@ -1,10 +1,10 @@
 """
-Document sync and Firestore-first endpoints.
+Document sync and database-first endpoints.
 
 This module handles document synchronization and validation operations, focusing on:
-- Sync validation between Firestore and GCS
-- Firestore-first document queries by filename
-- Folder-based document listing from Firestore
+- Sync validation between PostgreSQL and GCS
+- Database-first document queries by filename
+- Folder-based document listing from PostgreSQL
 - Rich relationship data and metadata queries
 """
 
@@ -13,8 +13,8 @@ from fastapi import APIRouter, Query, Depends
 
 from app.models.schemas import (
     DocumentSyncValidationResponse,
-    DocumentFirestoreResponse,
-    DocumentFirestoreFolderListResponse,
+    DocumentDatabaseResponse,
+    DocumentDatabaseFolderListResponse,
     PaginationParams,
     DocumentFilters,
     FileType,
@@ -37,17 +37,17 @@ router = APIRouter()
     "/sync/validate",
     response_model=DocumentSyncValidationResponse,
     summary="🔄 Validate Document Sync",
-    description="""Validate sync between Firestore documents and GCS files.
+    description="""Validate sync between PostgreSQL documents and GCS files.
 
 **Authentication Required:** Session token in `Authorization: Bearer <token>` header
 
 **Validation Checks:**
 This endpoint performs a comprehensive health check to ensure data consistency:
-- **File Existence**: All Firestore documents have corresponding GCS files
-- **Path Uniqueness**: No duplicate storage paths exist in Firestore
-- **Orphaned Files**: No GCS files exist without Firestore metadata
+- **File Existence**: All database documents have corresponding GCS files
+- **Path Uniqueness**: No duplicate storage paths exist in database
+- **Orphaned Files**: No GCS files exist without database metadata
 - **Status Consistency**: No documents are stuck in UPLOADING status
-- **Metadata Integrity**: File sizes and types match between Firestore and GCS
+- **Metadata Integrity**: File sizes and types match between database and GCS
 
 **Query Parameters:**
 - `folder_id`: Optional folder ID to filter validation scope (validates all documents if not provided)
@@ -84,11 +84,11 @@ curl -X GET "http://localhost:8000/api/v1/documents/sync/validate?folder_id=fold
 - **Monitoring**: Automated health checks in production environments
 
 **Issue Types:**
-- `missing_gcs_file`: Firestore document without corresponding GCS file
-- `orphaned_gcs_file`: GCS file without Firestore metadata
+- `missing_gcs_file`: Database document without corresponding GCS file
+- `orphaned_gcs_file`: GCS file without database metadata
 - `duplicate_storage_path`: Multiple documents with same storage path
 - `stuck_upload`: Document in UPLOADING status for too long
-- `size_mismatch`: File size differs between Firestore and GCS
+- `size_mismatch`: File size differs between database and GCS
 - `type_mismatch`: Content type differs between sources""",
     responses={
         200: {
@@ -138,7 +138,7 @@ curl -X GET "http://localhost:8000/api/v1/documents/sync/validate?folder_id=fold
                                     {
                                         "type": "orphaned_gcs_file",
                                         "severity": "medium",
-                                        "description": "GCS file exists without Firestore metadata",
+                                        "description": "GCS file exists without database metadata",
                                         "storage_path": "Google/original/reports/orphaned.xlsx",
                                     },
                                 ],
@@ -172,10 +172,10 @@ async def validate_document_sync(
     deps=Depends(get_document_dependencies),
 ):
     """
-    Validate sync between Firestore documents and GCS files.
+    Validate sync between PostgreSQL documents and GCS files.
 
     Performs comprehensive health checks to ensure data consistency
-    between metadata store (Firestore) and file storage (GCS).
+    between metadata store (PostgreSQL) and file storage (GCS).
     """
     document_service = deps["document_service"]
     org_id = user_context["org_id"]
@@ -204,15 +204,15 @@ async def validate_document_sync(
 
 
 @router.get(
-    "/firestore/by-filename/{filename}",
-    response_model=DocumentFirestoreResponse,
-    summary="🔍 Get Document by Filename (Firestore)",
-    description="""Get document information using filename from Firestore metadata store.
+    "/database/by-filename/{filename}",
+    response_model=DocumentDatabaseResponse,
+    summary="🔍 Get Document by Filename (Database)",
+    description="""Get document information using filename from PostgreSQL metadata store.
 
 **Authentication Required:** Session token in `Authorization: Bearer <token>` header
 
-**Firestore-First Architecture Benefits:**
-- **Performance**: Direct indexed Firestore queries instead of GCS bucket iteration
+**Database-First Architecture Benefits:**
+- **Performance**: Direct indexed PostgreSQL queries instead of GCS bucket iteration
 - **Rich Relationships**: Organization, folder, and uploader information in single response
 - **Real-time Status**: Current processing pipeline status from database
 - **Flexible Search**: Support for both exact and partial filename matching
@@ -228,7 +228,7 @@ async def validate_document_sync(
 **Response Structure:**
 The response includes multiple data sections:
 - **document**: Complete document metadata and status information
-- **firestore_metadata**: Query method and database information
+- **database_metadata**: Query method and database information
 - **relationships**: Related entities (organization, folder, uploader)
 - **search_criteria**: The search parameters used
 
@@ -241,15 +241,15 @@ The response includes multiple data sections:
 **Example Requests:**
 ```bash
 # Exact filename match (default)
-curl -X GET "http://localhost:8000/api/v1/documents/firestore/by-filename/invoice-2025-001.pdf" \\
+curl -X GET "http://localhost:8000/api/v1/documents/database/by-filename/invoice-2025-001.pdf" \\
   -H "Authorization: Bearer <session_token>"
 
 # Partial filename match
-curl -X GET "http://localhost:8000/api/v1/documents/firestore/by-filename/invoice?exact_match=false" \\
+curl -X GET "http://localhost:8000/api/v1/documents/database/by-filename/invoice?exact_match=false" \\
   -H "Authorization: Bearer <session_token>"
 
 # Include soft-deleted documents
-curl -X GET "http://localhost:8000/api/v1/documents/firestore/by-filename/contract.pdf?include_inactive=true" \\
+curl -X GET "http://localhost:8000/api/v1/documents/database/by-filename/contract.pdf?include_inactive=true" \\
   -H "Authorization: Bearer <session_token>"
 ```
 
@@ -258,7 +258,7 @@ curl -X GET "http://localhost:8000/api/v1/documents/firestore/by-filename/contra
 - **Document Discovery**: Find documents using partial filename search
 - **Status Monitoring**: Get real-time processing status
 - **Relationship Exploration**: Understand document context and ownership
-- **Debugging**: Compare Firestore vs GCS data consistency
+- **Debugging**: Compare PostgreSQL vs GCS data consistency
 - **Performance Testing**: Benchmark database vs storage queries""",
     responses={
         200: {
@@ -266,7 +266,7 @@ curl -X GET "http://localhost:8000/api/v1/documents/firestore/by-filename/contra
             "content": {
                 "application/json": {
                     "example": {
-                        "source": "firestore",
+                        "source": "postgresql",
                         "search_criteria": {
                             "filename": "invoice-2025-001.pdf",
                             "exact_match": True,
@@ -281,8 +281,8 @@ curl -X GET "http://localhost:8000/api/v1/documents/firestore/by-filename/contra
                             "org_id": "oJIChgDgktkF30dAPy2c",
                             "created_at": "2025-08-15T10:12:36.993659",
                         },
-                        "firestore_metadata": {
-                            "document_ref": "organizations/{org_id}/documents/{doc_id}",
+                        "database_metadata": {
+                            "document_ref": "documents/{doc_id}",
                             "query_method": "filename_exact_match",
                             "last_updated": "2025-08-15T11:35:22.987654",
                         },
@@ -334,7 +334,7 @@ curl -X GET "http://localhost:8000/api/v1/documents/firestore/by-filename/contra
         },
     },
 )
-async def get_document_by_filename_firestore(
+async def get_document_by_filename_database(
     filename: str,
     exact_match: bool = Query(
         True, description="Whether to match exact filename (true) or partial (false)"
@@ -346,9 +346,9 @@ async def get_document_by_filename_firestore(
     deps=Depends(get_document_dependencies),
 ):
     """
-    Get document by filename using Firestore as the primary data source.
+    Get document by filename using PostgreSQL as the primary data source.
 
-    Demonstrates proper Firestore-first architecture with indexed queries,
+    Demonstrates proper database-first architecture with indexed queries,
     rich relationship data, and comprehensive document information.
     """
     document_service = deps["document_service"]
@@ -356,14 +356,14 @@ async def get_document_by_filename_firestore(
 
     try:
         log_operation_start(
-            "Firestore filename search",
+            "Database filename search",
             filename=filename,
             exact_match=exact_match,
             include_inactive=include_inactive,
             **user_context,
         )
 
-        result = await document_service.get_document_by_filename_from_firestore(
+        result = await document_service.get_document_by_filename(
             org_id=org_id,
             filename=filename,
             exact_match=exact_match,
@@ -371,11 +371,11 @@ async def get_document_by_filename_firestore(
         )
 
         log_operation_success(
-            "Firestore filename search",
+            "Database filename search",
             filename=filename,
             document_id=result.document.id,
             exact_match=exact_match,
-            query_method=result.firestore_metadata.query_method,
+            query_method=result.database_metadata.query_method,
             **user_context,
         )
 
@@ -383,23 +383,23 @@ async def get_document_by_filename_firestore(
 
     except DocumentNotFoundError as e:
         raise handle_document_not_found_error(
-            e, "Firestore filename search", **user_context
+            e, "Database filename search", **user_context
         )
     except Exception as e:
-        raise handle_generic_error(e, "Firestore filename search", **user_context)
+        raise handle_generic_error(e, "Database filename search", **user_context)
 
 
 @router.get(
-    "/firestore/by-folder-name/{folder_name}",
-    response_model=DocumentFirestoreFolderListResponse,
-    summary="📁 List Documents by Folder Name (Firestore)",
-    description="""List all documents in a folder using folder name with Firestore-first architecture.
+    "/database/by-folder-name/{folder_name}",
+    response_model=DocumentDatabaseFolderListResponse,
+    summary="📁 List Documents by Folder Name (Database)",
+    description="""List all documents in a folder using folder name with database-first architecture.
 
 **Authentication Required:** Session token in `Authorization: Bearer <token>` header
 
-**Firestore-First Architecture Benefits:**
+**Database-First Architecture Benefits:**
 - **Natural Search**: Use human-readable folder names instead of folder IDs
-- **Indexed Queries**: Fast Firestore queries with proper indexing
+- **Indexed Queries**: Fast PostgreSQL queries with proper indexing
 - **Rich Context**: Complete folder information along with documents
 - **Efficient Pagination**: Database-level pagination for large folders
 - **Multiple Filters**: Combine various filtering criteria within folders
@@ -420,11 +420,11 @@ async def get_document_by_filename_firestore(
 - **documents**: Paginated list of documents in the folder
 - **folder_info**: Complete folder metadata and information
 - **pagination**: Page information (current, total pages, counts)
-- **firestore_metadata**: Query metadata and database information
+- **database_metadata**: Query metadata and database information
 - **filters_applied**: Summary of active filters
 
 **Performance Advantages:**
-- **Indexed Queries**: Uses Firestore composite indexes for optimal performance
+- **Indexed Queries**: Uses PostgreSQL indexes for optimal performance
 - **Database Pagination**: Efficient pagination without loading all documents
 - **Combined Filters**: Multiple filter criteria applied at database level
 - **Relationship Joins**: Folder and document data retrieved in optimized queries
@@ -432,19 +432,19 @@ async def get_document_by_filename_firestore(
 **Example Requests:**
 ```bash
 # List all documents in "invoices" folder
-curl -X GET "http://localhost:8000/api/v1/documents/firestore/by-folder-name/invoices" \\
+curl -X GET "http://localhost:8000/api/v1/documents/database/by-folder-name/invoices" \\
   -H "Authorization: Bearer <session_token>"
 
 # Search for folders containing "invoice" with pagination
-curl -X GET "http://localhost:8000/api/v1/documents/firestore/by-folder-name/invoice?exact_match=false&page=1&per_page=10" \\
+curl -X GET "http://localhost:8000/api/v1/documents/database/by-folder-name/invoice?exact_match=false&page=1&per_page=10" \\
   -H "Authorization: Bearer <session_token>"
 
 # Filter PDF files in contracts folder
-curl -X GET "http://localhost:8000/api/v1/documents/firestore/by-folder-name/contracts?file_type=pdf" \\
+curl -X GET "http://localhost:8000/api/v1/documents/database/by-folder-name/contracts?file_type=pdf" \\
   -H "Authorization: Bearer <session_token>"
 
 # Find processed documents in reports folder
-curl -X GET "http://localhost:8000/api/v1/documents/firestore/by-folder-name/reports?document_status=parsed" \\
+curl -X GET "http://localhost:8000/api/v1/documents/database/by-folder-name/reports?document_status=parsed" \\
   -H "Authorization: Bearer <session_token>"
 ```
 
@@ -480,7 +480,7 @@ curl -X GET "http://localhost:8000/api/v1/documents/firestore/by-folder-name/rep
                         "page": 1,
                         "per_page": 20,
                         "total_pages": 1,
-                        "firestore_metadata": {
+                        "database_metadata": {
                             "query_method": "folder_name_exact_match",
                             "filters_applied": ["file_type", "status"],
                         },
@@ -511,7 +511,7 @@ curl -X GET "http://localhost:8000/api/v1/documents/firestore/by-folder-name/rep
         },
     },
 )
-async def list_documents_by_folder_name_firestore(
+async def list_documents_by_folder_name_database(
     folder_name: str,
     page: int = Query(1, ge=1, description="Page number"),
     per_page: int = Query(20, ge=1, le=100, description="Items per page"),
@@ -534,9 +534,9 @@ async def list_documents_by_folder_name_firestore(
     deps=Depends(get_document_dependencies),
 ):
     """
-    List documents in a folder by folder name using Firestore as the primary data source.
+    List documents in a folder by folder name using PostgreSQL as the primary data source.
 
-    Demonstrates proper Firestore-first architecture with natural folder name search,
+    Demonstrates proper database-first architecture with natural folder name search,
     efficient pagination, and comprehensive filtering capabilities.
     """
     document_service = deps["document_service"]
@@ -544,7 +544,7 @@ async def list_documents_by_folder_name_firestore(
 
     try:
         log_operation_start(
-            "Firestore folder document listing",
+            "Database folder document listing",
             folder_name=folder_name,
             page=page,
             per_page=per_page,
@@ -564,7 +564,7 @@ async def list_documents_by_folder_name_firestore(
             file_type=file_type, status=document_status, filename=filename
         )
 
-        result = await document_service.get_documents_by_folder_name_from_firestore(
+        result = await document_service.get_documents_by_folder_name(
             org_id=org_id,
             folder_name=folder_name,
             pagination=pagination,
@@ -574,14 +574,14 @@ async def list_documents_by_folder_name_firestore(
         )
 
         log_operation_success(
-            "Firestore folder document listing",
+            "Database folder document listing",
             folder_name=folder_name,
             folder_id=result.folder_info.id,
             total_documents=result.total,
             returned_documents=len(result.documents),
             page=page,
             exact_match=exact_match,
-            query_method=result.firestore_metadata.query_method,
+            query_method=result.database_metadata.query_method,
             **user_context,
         )
 
@@ -589,9 +589,9 @@ async def list_documents_by_folder_name_firestore(
 
     except DocumentNotFoundError as e:
         raise handle_document_not_found_error(
-            e, "Firestore folder search", **user_context
+            e, "Database folder search", **user_context
         )
     except Exception as e:
         raise handle_generic_error(
-            e, "Firestore folder document listing", **user_context
+            e, "Database folder document listing", **user_context
         )

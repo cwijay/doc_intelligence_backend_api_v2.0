@@ -8,10 +8,10 @@ It implements the Facade pattern to provide a unified interface to a complex sub
 The service delegates operations to specialized services:
 - DocumentValidationService: File validation and security
 - DocumentStorageService: GCS operations and path management
-- Additional services for CRUD, querying, AI content, sync, and downloads
+- Additional services for CRUD, querying, sync, and downloads
 """
 
-from typing import List, Optional, Dict, Any, Tuple
+from typing import Optional, Dict, Any, Tuple
 from fastapi import UploadFile
 
 from app.models.document import Document, DocumentStatus, FileType
@@ -32,7 +32,6 @@ from .document_validation_service import DocumentValidationService
 from .document_storage_service import DocumentStorageService
 from .document_crud_service import DocumentCrudService
 from .document_query_service import DocumentQueryService
-from .document_ai_service import DocumentAIService
 from .document_sync_service import DocumentSyncService
 from .document_download_service import DocumentDownloadService
 
@@ -54,7 +53,6 @@ class DocumentService(DocumentBaseService):
         self.storage_service = DocumentStorageService()
         self.crud_service = DocumentCrudService()
         self.query_service = DocumentQueryService()
-        self.ai_service = DocumentAIService()
         self.sync_service = DocumentSyncService()
         self.download_service = DocumentDownloadService()
 
@@ -111,21 +109,6 @@ class DocumentService(DocumentBaseService):
     async def _enrich_document_metadata(self, document: Document) -> Document:
         """Delegate to storage service."""
         return await self.storage_service._enrich_document_metadata(document)
-
-    def _generate_parsed_storage_path(self, original_path: str) -> str:
-        """Delegate to storage service."""
-        return self.storage_service._generate_parsed_storage_path(original_path)
-
-    async def validate_content_sync(
-        self,
-        org_id: str,
-        document_id: Optional[str] = None,
-        storage_path: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        """Delegate to storage service."""
-        return await self.storage_service.validate_content_sync(
-            org_id, document_id, storage_path
-        )
 
     # ========================================
     # DELEGATED CRUD METHODS
@@ -208,46 +191,13 @@ class DocumentService(DocumentBaseService):
             crud_service=self.crud_service,
         )
 
-    async def update_document_summary(
-        self, org_id: str, document_id: str, summary: str
-    ) -> DocumentResponse:
-        """Delegate to AI service."""
-        return await self.ai_service.update_document_summary(
-            org_id=org_id, document_id=document_id, summary=summary
-        )
-
-    async def update_document_ai_content(
-        self,
-        org_id: str,
-        document_id: str,
-        summary: Optional[str] = None,
-        faq: Optional[List[Dict[str, str]]] = None,
-        questions: Optional[List[str]] = None,
-    ) -> DocumentResponse:
-        """Delegate to AI service."""
-        return await self.ai_service.update_document_ai_content(
-            org_id=org_id,
-            document_id=document_id,
-            summary=summary,
-            faq=faq,
-            questions=questions,
-        )
-
-    async def get_document_ai_content(
-        self, org_id: str, document_id: str
-    ) -> Dict[str, Any]:
-        """Delegate to AI service."""
-        return await self.ai_service.get_document_ai_content(
-            org_id=org_id, document_id=document_id
-        )
-
     async def validate_sync(
         self, org_id: str, folder_id: Optional[str] = None
     ) -> Dict[str, Any]:
         """Delegate to sync service."""
         return await self.sync_service.validate_sync(org_id=org_id, folder_id=folder_id)
 
-    async def get_document_by_filename_from_firestore(
+    async def get_document_by_filename(
         self,
         org_id: str,
         filename: str,
@@ -255,7 +205,7 @@ class DocumentService(DocumentBaseService):
         include_inactive: bool = False,
     ) -> Any:
         """Delegate to query service."""
-        return await self.query_service.get_document_by_filename_from_firestore(
+        return await self.query_service.get_document_by_filename(
             org_id=org_id,
             filename=filename,
             exact_match=exact_match,
@@ -264,7 +214,7 @@ class DocumentService(DocumentBaseService):
             validation_service=self.validation_service,
         )
 
-    async def get_documents_by_folder_name_from_firestore(
+    async def get_documents_by_folder_name(
         self,
         org_id: str,
         folder_name: str,
@@ -274,7 +224,7 @@ class DocumentService(DocumentBaseService):
         additional_filters: Optional[DocumentFilters] = None,
     ) -> Any:
         """Delegate to query service."""
-        return await self.query_service.get_documents_by_folder_name_from_firestore(
+        return await self.query_service.get_documents_by_folder_name(
             org_id=org_id,
             folder_name=folder_name,
             pagination=pagination,
@@ -283,19 +233,19 @@ class DocumentService(DocumentBaseService):
             additional_filters=additional_filters,
         )
 
-    async def sync_content_to_firestore(
+    async def sync_content_to_database(
         self, org_id: str, document_id: str, content: str, user_id: str
     ) -> Dict[str, Any]:
         """Delegate to sync service."""
-        return await self.sync_service.sync_content_to_firestore(
+        return await self.sync_service.sync_content_to_database(
             org_id=org_id, document_id=document_id, content=content, user_id=user_id
         )
 
-    async def sync_content_from_firestore_to_gcs(
+    async def sync_content_from_database_to_gcs(
         self, org_id: str, document_id: str, user_id: str
     ) -> Dict[str, Any]:
         """Delegate to sync service."""
-        return await self.sync_service.sync_content_from_firestore_to_gcs(
+        return await self.sync_service.sync_content_from_database_to_gcs(
             org_id=org_id,
             document_id=document_id,
             user_id=user_id,

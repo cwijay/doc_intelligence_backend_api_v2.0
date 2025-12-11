@@ -3,14 +3,20 @@
 GCP Bucket Setup Script for Document Intelligence Backend
 
 This script creates and configures the required GCS bucket for the document intelligence system.
-Based on patterns from: https://github.com/cwijayasundara/biz_to_bricks_v3/tree/main/server
 
 Usage:
     python setup_gcp_bucket.py
 
+    # With custom configuration
+    GCP_PROJECT_ID=my-project GCS_BUCKET_NAME=my-bucket python setup_gcp_bucket.py
+
+Environment Variables:
+    GCP_PROJECT_ID - Your GCP project ID
+    GCS_BUCKET_NAME - Name for the GCS bucket
+    GCS_REGION - Region (default: us-central1)
+
 Requirements:
     - Google Cloud SDK installed and authenticated
-    - Project ID: ibm-keras
     - Required permissions to create buckets
 """
 
@@ -19,11 +25,18 @@ import sys
 import logging
 from typing import Optional, List, Dict, Any
 from datetime import datetime
+from pathlib import Path
 
 from google.cloud import storage
 from google.auth.exceptions import DefaultCredentialsError
 from google.api_core.exceptions import GoogleAPIError, Conflict, NotFound
 import google.auth
+
+# Load environment variables from .env if available
+from dotenv import load_dotenv
+env_path = Path(__file__).parent / ".env"
+if env_path.exists():
+    load_dotenv(env_path)
 
 # Setup logging
 logging.basicConfig(
@@ -32,10 +45,10 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Configuration
-PROJECT_ID = "ibm-keras"
-BUCKET_NAME = "biz-to-bricks-document-store"
-REGION = "us-central1"  # Change as needed
+# Configuration from environment variables with defaults
+PROJECT_ID = os.environ.get("GCP_PROJECT_ID", "")
+BUCKET_NAME = os.environ.get("GCS_BUCKET_NAME", "")
+REGION = os.environ.get("GCS_REGION", "us-central1")
 STORAGE_CLASS = "STANDARD"
 
 # Required folder structure prefixes for testing
@@ -256,92 +269,155 @@ class GCPBucketSetup:
 
     def display_summary(self) -> None:
         """Display setup summary and next steps."""
-        print("\n" + "="*60)
-        print("GCP BUCKET SETUP SUMMARY")
-        print("="*60)
-        print(f"Project ID: {self.project_id}")
-        print(f"Bucket Name: {self.bucket_name}")
-        print(f"Bucket URI: gs://{self.bucket_name}")
-        print(f"Region: {self.bucket.location if self.bucket else 'Unknown'}")
-        print(f"Storage Class: {self.bucket.storage_class if self.bucket else 'Unknown'}")
-        print("\nFolder Structure:")
-        print("- <organization_name>/original/<folder_path>/")
-        print("- <organization_name>/parsed/<folder_path>/")
-        print("- <organization_name>/bm-25/<folder_path>/")
-        print("\nNext Steps:")
-        print("1. Update your .env file with:")
-        print(f"   GCP_PROJECT_ID={self.project_id}")
-        print(f"   GCS_BUCKET_NAME={self.bucket_name}")
-        print("2. Ensure GOOGLE_APPLICATION_CREDENTIALS is set")
-        print("3. Test the folder management API endpoints")
-        print("="*60)
+        logger.info("=" * 60)
+        logger.info("GCP BUCKET SETUP SUMMARY")
+        logger.info("=" * 60)
+        logger.info(f"Project ID: {self.project_id}")
+        logger.info(f"Bucket Name: {self.bucket_name}")
+        logger.info(f"Bucket URI: gs://{self.bucket_name}")
+        logger.info(f"Region: {self.bucket.location if self.bucket else 'Unknown'}")
+        logger.info(f"Storage Class: {self.bucket.storage_class if self.bucket else 'Unknown'}")
+        logger.info("Folder Structure:")
+        logger.info("- <organization_name>/original/<folder_path>/")
+        logger.info("- <organization_name>/parsed/<folder_path>/")
+        logger.info("- <organization_name>/bm-25/<folder_path>/")
+        logger.info("Next Steps:")
+        logger.info("1. Update your .env file with:")
+        logger.info(f"   GCP_PROJECT_ID={self.project_id}")
+        logger.info(f"   GCS_BUCKET_NAME={self.bucket_name}")
+        logger.info("2. Ensure GOOGLE_APPLICATION_CREDENTIALS is set")
+        logger.info("3. Test the folder management API endpoints")
+        logger.info("=" * 60)
 
 
 def main():
     """Main setup function."""
-    print("GCP Bucket Setup for Document Intelligence Backend")
-    print(f"Project: {PROJECT_ID}")
-    print(f"Bucket: {BUCKET_NAME}")
-    print("-" * 60)
-    
+    global PROJECT_ID, BUCKET_NAME, REGION
+
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Setup GCS bucket for Document Intelligence API"
+    )
+    parser.add_argument(
+        "--project",
+        help="GCP Project ID (overrides environment)"
+    )
+    parser.add_argument(
+        "--bucket",
+        help="Bucket name (overrides environment)"
+    )
+    parser.add_argument(
+        "--region",
+        default="us-central1",
+        help="Region (default: us-central1)"
+    )
+    parser.add_argument(
+        "--non-interactive",
+        action="store_true",
+        help="Run without prompts (for CI/CD)"
+    )
+    parser.add_argument(
+        "--skip-test",
+        action="store_true",
+        help="Skip test folder creation and verification"
+    )
+
+    args = parser.parse_args()
+
+    logger.info("GCP Bucket Setup for Document Intelligence Backend")
+    logger.info("-" * 60)
+
+    # Get configuration from args, environment, or prompt
+    if args.project:
+        PROJECT_ID = args.project
+    elif not PROJECT_ID:
+        if args.non_interactive:
+            logger.error("GCP_PROJECT_ID not set and non-interactive mode enabled")
+            sys.exit(1)
+        PROJECT_ID = input("Enter GCP Project ID: ").strip()
+        if not PROJECT_ID:
+            logger.error("Project ID is required")
+            sys.exit(1)
+
+    if args.bucket:
+        BUCKET_NAME = args.bucket
+    elif not BUCKET_NAME:
+        default_bucket = f"{PROJECT_ID}-document-store"
+        if args.non_interactive:
+            BUCKET_NAME = default_bucket
+        else:
+            BUCKET_NAME = input(f"Enter bucket name [{default_bucket}]: ").strip() or default_bucket
+
+    if args.region:
+        REGION = args.region
+
+    logger.info(f"Project: {PROJECT_ID}")
+    logger.info(f"Bucket: {BUCKET_NAME}")
+    logger.info(f"Region: {REGION}")
+    logger.info("-" * 60)
+
     # Initialize setup
     setup = GCPBucketSetup(PROJECT_ID, BUCKET_NAME)
-    
+
     # Step 1: Authenticate
-    print("\n1. Authenticating with Google Cloud...")
+    logger.info("1. Authenticating with Google Cloud...")
     if not setup.authenticate():
-        print("❌ Authentication failed. Please check your credentials.")
+        logger.error("Authentication failed. Please check your credentials.")
         sys.exit(1)
-    print("✅ Authentication successful")
-    
+    logger.info("Authentication successful")
+
     # Step 2: Check if bucket exists
-    print("\n2. Checking if bucket exists...")
+    logger.info("2. Checking if bucket exists...")
     bucket_exists = setup.check_bucket_exists()
-    
+
     # Step 3: Create bucket if needed
     if not bucket_exists:
-        print("\n3. Creating bucket...")
+        logger.info("3. Creating bucket...")
         if not setup.create_bucket():
-            print("❌ Bucket creation failed.")
+            logger.error("Bucket creation failed.")
             sys.exit(1)
-        print("✅ Bucket created successfully")
+        logger.info("Bucket created successfully")
     else:
-        print("\n3. Using existing bucket...")
+        logger.info("3. Using existing bucket...")
         setup.bucket = setup.client.bucket(BUCKET_NAME)
-    
+
     # Step 4: Configure bucket
-    print("\n4. Configuring bucket permissions...")
+    logger.info("4. Configuring bucket permissions...")
     if not setup.configure_bucket_permissions():
-        print("⚠️ Warning: Bucket configuration failed, but continuing...")
+        logger.warning("Bucket configuration failed, but continuing...")
     else:
-        print("✅ Bucket configured successfully")
-    
-    # Step 5: Test folder structure
-    print("\n5. Creating test folder structure...")
-    if not setup.create_folder_structure_test():
-        print("❌ Test folder creation failed.")
-        sys.exit(1)
-    print("✅ Test folder structure created")
-    
-    # Step 6: Verify setup
-    print("\n6. Verifying setup...")
-    if not setup.verify_setup():
-        print("❌ Setup verification failed.")
-        sys.exit(1)
-    print("✅ Setup verification successful")
-    
-    # Step 7: Cleanup test data
-    print("\n7. Cleaning up test data...")
-    if not setup.cleanup_test_data():
-        print("⚠️ Warning: Test data cleanup failed")
+        logger.info("Bucket configured successfully")
+
+    # Step 5: Test folder structure (skip if --skip-test)
+    if not args.skip_test:
+        logger.info("5. Creating test folder structure...")
+        if not setup.create_folder_structure_test():
+            logger.error("Test folder creation failed.")
+            sys.exit(1)
+        logger.info("Test folder structure created")
+
+        # Step 6: Verify setup
+        logger.info("6. Verifying setup...")
+        if not setup.verify_setup():
+            logger.error("Setup verification failed.")
+            sys.exit(1)
+        logger.info("Setup verification successful")
+
+        # Step 7: Cleanup test data
+        logger.info("7. Cleaning up test data...")
+        if not setup.cleanup_test_data():
+            logger.warning("Test data cleanup failed")
+        else:
+            logger.info("Test data cleaned up")
     else:
-        print("✅ Test data cleaned up")
-    
+        logger.info("5-7. Skipping test folder creation and verification (--skip-test)")
+
     # Display summary
     setup.display_summary()
-    
-    print("\n🎉 GCP bucket setup completed successfully!")
-    print("Your document intelligence backend is now ready to use GCS storage.")
+
+    logger.info("GCP bucket setup completed successfully!")
+    logger.info("Your document intelligence backend is now ready to use GCS storage.")
 
 
 if __name__ == "__main__":

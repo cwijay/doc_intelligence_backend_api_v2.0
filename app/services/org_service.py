@@ -1,8 +1,11 @@
-from typing import Optional
+from typing import Optional, Dict, Any
 import math
-from datetime import datetime
+import asyncio
+from datetime import datetime, timezone
+from uuid import uuid4
 
-from google.cloud.firestore_v1 import FieldFilter
+from sqlalchemy import select, func
+from sqlalchemy.exc import IntegrityError
 
 from app.models.organization import Organization
 from app.models.schemas import (
@@ -13,42 +16,60 @@ from app.models.schemas import (
     PaginationParams,
     OrganizationFilters,
 )
-from app.core.firebase_client import (
-    get_collection,
-)
+from app.core.db_client import db
+from app.core.db_models import OrganizationModel, AuditAction, AuditEntityType
 from app.core.logging import get_service_logger
+from app.services.audit_service import audit_service
 
 logger = get_service_logger("organization")
 
 
 class OrganizationNotFoundError(Exception):
     """Organization not found error."""
-
     pass
 
 
 class OrganizationAlreadyExistsError(Exception):
     """Organization already exists error."""
-
     pass
 
 
 class OrganizationService:
     """Service for managing organizations with multi-tenancy support."""
 
-    COLLECTION_NAME = "organizations"
-
     def __init__(self):
         self.logger = logger
 
+    def _model_to_pydantic(self, model: OrganizationModel) -> Organization:
+        """Convert SQLAlchemy model to Pydantic model."""
+        return Organization(
+            id=model.id,
+            name=model.name,
+            domain=model.domain,
+            plan_type=model.plan_type,
+            settings=model.settings or {},
+            is_active=model.is_active,
+            created_at=model.created_at,
+            updated_at=model.updated_at,
+        )
+
     async def create_organization(
-        self, org_data: OrganizationCreate
+        self,
+        org_data: OrganizationCreate,
+        created_by_user_id: Optional[str] = None,
+        ip_address: Optional[str] = None,
+        session_id: Optional[str] = None,
+        user_agent: Optional[str] = None,
     ) -> OrganizationResponse:
         """
         Create a new organization.
 
         Args:
             org_data: Organization creation data
+            created_by_user_id: ID of user who created this org (for audit)
+            ip_address: Client IP address (for audit)
+            session_id: Session ID (for audit)
+            user_agent: Client user agent (for audit)
 
         Returns:
             Created organization response
@@ -57,36 +78,72 @@ class OrganizationService:
             OrganizationAlreadyExistsError: If organization name already exists
         """
         try:
-            # Check if organization with same name already exists
-            existing_org = await self._get_organization_by_name(org_data.name)
-            if existing_org and existing_org.is_active:
-                raise OrganizationAlreadyExistsError(
-                    f"Organization with name '{org_data.name}' already exists"
+            async with db.session() as session:
+                # Check if organization with same name already exists
+                stmt = select(OrganizationModel).where(
+                    OrganizationModel.name == org_data.name,
+                    OrganizationModel.is_active == True
+                )
+                result = await session.execute(stmt)
+                existing = result.scalar_one_or_none()
+
+                if existing:
+                    raise OrganizationAlreadyExistsError(
+                        f"Organization with name '{org_data.name}' already exists"
+                    )
+
+                # Create new organization
+                org_id = str(uuid4())
+                now = datetime.now(timezone.utc)
+
+                org_model = OrganizationModel(
+                    id=org_id,
+                    name=org_data.name,
+                    domain=org_data.domain,
+                    settings=org_data.settings or {},
+                    plan_type=org_data.plan_type.value if hasattr(org_data.plan_type, 'value') else org_data.plan_type,
+                    is_active=True,
+                    created_at=now,
+                    updated_at=now,
                 )
 
-            # Create new organization
-            org = Organization(
-                name=org_data.name,
-                domain=org_data.domain,
-                settings=org_data.settings,
-                plan_type=org_data.plan_type,
-                is_active=True,
-                created_at=datetime.utcnow(),
-                updated_at=datetime.utcnow(),
-            )
+                session.add(org_model)
+                await session.flush()
 
-            # Add to Firestore
-            collection = get_collection(self.COLLECTION_NAME)
-            timestamp, doc_ref = await collection.add(org.to_dict())
-            org_id = doc_ref.id
-            org.id = org_id
+                org = self._model_to_pydantic(org_model)
+                self.logger.info("Organization created", org_id=org_id, name=org.name)
 
-            self.logger.info("Organization created", org_id=org_id, name=org.name)
+                # Audit logging (non-blocking)
+                asyncio.create_task(
+                    audit_service.log_event(
+                        org_id=org_id,
+                        action=AuditAction.CREATE,
+                        entity_type=AuditEntityType.ORGANIZATION,
+                        entity_id=org_id,
+                        user_id=created_by_user_id,
+                        details={
+                            "new_values": {
+                                "name": org.name,
+                                "domain": org.domain,
+                                "plan_type": org.plan_type,
+                            },
+                            "operation": "create",
+                        },
+                        ip_address=ip_address,
+                        session_id=session_id,
+                        user_agent=user_agent,
+                    )
+                )
 
-            return OrganizationResponse.model_validate(org)
+                return OrganizationResponse.model_validate(org)
 
         except OrganizationAlreadyExistsError:
             raise
+        except IntegrityError as e:
+            self.logger.error("Database integrity error", error=str(e))
+            raise OrganizationAlreadyExistsError(
+                f"Organization with name '{org_data.name}' already exists"
+            )
         except Exception as e:
             self.logger.error("Error creating organization", error=str(e))
             raise
@@ -96,7 +153,7 @@ class OrganizationService:
         Get organization by ID.
 
         Args:
-            org_id: Organization ID (Firestore document ID)
+            org_id: Organization ID
 
         Returns:
             Organization response
@@ -105,25 +162,23 @@ class OrganizationService:
             OrganizationNotFoundError: If organization not found
         """
         try:
-            doc_ref = get_collection(self.COLLECTION_NAME).document(org_id)
-            doc = await doc_ref.get()
-
-            if not doc.exists:
-                raise OrganizationNotFoundError(
-                    f"Organization with ID {org_id} not found"
+            async with db.session() as session:
+                stmt = select(OrganizationModel).where(
+                    OrganizationModel.id == org_id,
+                    OrganizationModel.is_active == True
                 )
+                result = await session.execute(stmt)
+                org_model = result.scalar_one_or_none()
 
-            org_data = doc.to_dict()
-            org = Organization.from_dict(org_data, doc.id)
+                if not org_model:
+                    raise OrganizationNotFoundError(
+                        f"Organization with ID {org_id} not found"
+                    )
 
-            if not org.is_active:
-                raise OrganizationNotFoundError(
-                    f"Organization with ID {org_id} not found"
-                )
+                org = self._model_to_pydantic(org_model)
+                self.logger.debug("Organization retrieved", org_id=org_id)
 
-            self.logger.debug("Organization retrieved", org_id=org_id)
-
-            return OrganizationResponse.model_validate(org)
+                return OrganizationResponse.model_validate(org)
 
         except OrganizationNotFoundError:
             raise
@@ -134,14 +189,24 @@ class OrganizationService:
             raise
 
     async def update_organization(
-        self, org_id: str, update_data: OrganizationUpdate
+        self,
+        org_id: str,
+        update_data: OrganizationUpdate,
+        updated_by_user_id: Optional[str] = None,
+        ip_address: Optional[str] = None,
+        session_id: Optional[str] = None,
+        user_agent: Optional[str] = None,
     ) -> OrganizationResponse:
         """
         Update organization.
 
         Args:
-            org_id: Organization ID (Firestore document ID)
+            org_id: Organization ID
             update_data: Update data
+            updated_by_user_id: ID of user who updated this org (for audit)
+            ip_address: Client IP address (for audit)
+            session_id: Session ID (for audit)
+            user_agent: Client user agent (for audit)
 
         Returns:
             Updated organization response
@@ -151,53 +216,92 @@ class OrganizationService:
             OrganizationAlreadyExistsError: If name conflict occurs
         """
         try:
-            # Get existing organization
-            doc_ref = get_collection(self.COLLECTION_NAME).document(org_id)
-            doc = await doc_ref.get()
-
-            if not doc.exists:
-                raise OrganizationNotFoundError(
-                    f"Organization with ID {org_id} not found"
+            async with db.session() as session:
+                # Get existing organization
+                stmt = select(OrganizationModel).where(
+                    OrganizationModel.id == org_id,
+                    OrganizationModel.is_active == True
                 )
+                result = await session.execute(stmt)
+                org_model = result.scalar_one_or_none()
 
-            org_data = doc.to_dict()
-            org = Organization.from_dict(org_data, doc.id)
-
-            if not org.is_active:
-                raise OrganizationNotFoundError(
-                    f"Organization with ID {org_id} not found"
-                )
-
-            # Check name uniqueness if name is being updated
-            if update_data.name and update_data.name != org.name:
-                existing_org = await self._get_organization_by_name(update_data.name)
-                if (
-                    existing_org
-                    and existing_org.id != org_id
-                    and existing_org.is_active
-                ):
-                    raise OrganizationAlreadyExistsError(
-                        f"Organization with name '{update_data.name}' already exists"
+                if not org_model:
+                    raise OrganizationNotFoundError(
+                        f"Organization with ID {org_id} not found"
                     )
 
-            # Update fields
-            update_fields = update_data.model_dump(exclude_unset=True)
-            for field, value in update_fields.items():
-                setattr(org, field, value)
+                # Capture old values for audit
+                old_values = {
+                    "name": org_model.name,
+                    "domain": org_model.domain,
+                    "plan_type": org_model.plan_type,
+                }
 
-            # Update timestamp
-            org.update_timestamp()
+                # Check name uniqueness if name is being updated
+                if update_data.name and update_data.name != org_model.name:
+                    name_check = select(OrganizationModel).where(
+                        OrganizationModel.name == update_data.name,
+                        OrganizationModel.id != org_id,
+                        OrganizationModel.is_active == True
+                    )
+                    name_result = await session.execute(name_check)
+                    if name_result.scalar_one_or_none():
+                        raise OrganizationAlreadyExistsError(
+                            f"Organization with name '{update_data.name}' already exists"
+                        )
 
-            # Save to Firestore
-            await doc_ref.update(org.to_dict())
+                # Update fields
+                update_fields = update_data.model_dump(exclude_unset=True)
+                for field, value in update_fields.items():
+                    if field == 'plan_type' and hasattr(value, 'value'):
+                        value = value.value
+                    setattr(org_model, field, value)
 
-            self.logger.info(
-                "Organization updated",
-                org_id=org_id,
-                updates=list(update_fields.keys()),
-            )
+                org_model.updated_at = datetime.now(timezone.utc)
+                await session.flush()
 
-            return OrganizationResponse.model_validate(org)
+                org = self._model_to_pydantic(org_model)
+                self.logger.info(
+                    "Organization updated",
+                    org_id=org_id,
+                    updates=list(update_fields.keys()),
+                )
+
+                # Capture new values and calculate changes
+                new_values = {
+                    "name": org.name,
+                    "domain": org.domain,
+                    "plan_type": org.plan_type,
+                }
+                changes = {}
+                for key in new_values:
+                    if old_values.get(key) != new_values.get(key):
+                        changes[key] = {
+                            "old": old_values.get(key),
+                            "new": new_values.get(key),
+                        }
+
+                # Audit logging (non-blocking)
+                asyncio.create_task(
+                    audit_service.log_event(
+                        org_id=org_id,
+                        action=AuditAction.UPDATE,
+                        entity_type=AuditEntityType.ORGANIZATION,
+                        entity_id=org_id,
+                        user_id=updated_by_user_id,
+                        details={
+                            "old_values": old_values,
+                            "new_values": new_values,
+                            "changes": changes,
+                            "operation": "update",
+                        },
+                        ip_address=ip_address,
+                        session_id=session_id,
+                        user_agent=user_agent,
+                    )
+                )
+
+                return OrganizationResponse.model_validate(org)
 
         except (OrganizationNotFoundError, OrganizationAlreadyExistsError):
             raise
@@ -223,98 +327,82 @@ class OrganizationService:
             Paginated organization list
         """
         try:
-            collection = get_collection(self.COLLECTION_NAME)
+            async with db.session() as session:
+                # Build base query
+                stmt = select(OrganizationModel).where(OrganizationModel.is_active == True)
 
-            # Build query with filters
-            query = collection
-            firestore_filters = []
-
-            # Always filter for active organizations
-            firestore_filters.append(FieldFilter("is_active", "==", True))
-
-            if filters:
-                if filters.plan_type:
-                    firestore_filters.append(
-                        FieldFilter("plan_type", "==", filters.plan_type.value)
-                    )
-
-                if filters.is_active is not None:
-                    # Update the active filter
-                    firestore_filters[-1] = FieldFilter(
-                        "is_active", "==", filters.is_active
-                    )
-
-            # Apply filters
-            for filter_obj in firestore_filters:
-                query = query.where(filter=filter_obj)
-
-            # Order by created_at descending
-            from google.cloud.firestore import Query
-
-            query = query.order_by("created_at", direction=Query.DESCENDING)
-
-            # Get all documents for filtering and counting
-            docs = query.stream()
-            all_organizations = []
-
-            async for doc in docs:
-                org_data = doc.to_dict()
-                org = Organization.from_dict(org_data, doc.id)
-
-                # Apply client-side filters for text search (Firestore doesn't support ILIKE)
+                # Apply filters
                 if filters:
-                    if filters.name and filters.name.lower() not in org.name.lower():
-                        continue
-                    if (
-                        filters.domain
-                        and org.domain
-                        and filters.domain.lower() not in org.domain.lower()
-                    ):
-                        continue
+                    if filters.plan_type:
+                        plan_value = filters.plan_type.value if hasattr(filters.plan_type, 'value') else filters.plan_type
+                        stmt = stmt.where(OrganizationModel.plan_type == plan_value)
 
-                all_organizations.append(org)
+                    if filters.is_active is not None:
+                        stmt = stmt.where(OrganizationModel.is_active == filters.is_active)
 
-            # Get total count
-            total = len(all_organizations)
+                    if filters.name:
+                        stmt = stmt.where(OrganizationModel.name.ilike(f"%{filters.name}%"))
 
-            # Apply pagination
-            start_idx = pagination.offset
-            end_idx = start_idx + pagination.per_page
-            paginated_orgs = all_organizations[start_idx:end_idx]
+                    if filters.domain:
+                        stmt = stmt.where(OrganizationModel.domain.ilike(f"%{filters.domain}%"))
 
-            # Convert to response models
-            org_responses = [
-                OrganizationResponse.model_validate(org) for org in paginated_orgs
-            ]
+                # Get total count
+                count_stmt = select(func.count()).select_from(stmt.subquery())
+                count_result = await session.execute(count_stmt)
+                total = count_result.scalar() or 0
 
-            # Calculate pagination info
-            total_pages = math.ceil(total / pagination.per_page) if total > 0 else 0
+                # Apply ordering and pagination
+                stmt = stmt.order_by(OrganizationModel.created_at.desc())
+                stmt = stmt.offset(pagination.offset).limit(pagination.per_page)
 
-            self.logger.debug(
-                "Organizations listed",
-                count=len(org_responses),
-                total=total,
-                page=pagination.page,
-            )
+                result = await session.execute(stmt)
+                org_models = result.scalars().all()
 
-            return OrganizationList(
-                items=org_responses,
-                total=total,
-                page=pagination.page,
-                per_page=pagination.per_page,
-                total_pages=total_pages,
-            )
+                # Convert to response models
+                org_responses = [
+                    OrganizationResponse.model_validate(self._model_to_pydantic(m))
+                    for m in org_models
+                ]
+
+                # Calculate pagination info
+                total_pages = math.ceil(total / pagination.per_page) if total > 0 else 0
+
+                self.logger.debug(
+                    "Organizations listed",
+                    count=len(org_responses),
+                    total=total,
+                    page=pagination.page,
+                )
+
+                return OrganizationList(
+                    items=org_responses,
+                    total=total,
+                    page=pagination.page,
+                    per_page=pagination.per_page,
+                    total_pages=total_pages,
+                )
 
         except Exception as e:
             self.logger.error("Error listing organizations", error=str(e))
             raise
 
-    async def delete_organization(self, org_id: str) -> bool:
+    async def delete_organization(
+        self,
+        org_id: str,
+        deleted_by_user_id: Optional[str] = None,
+        ip_address: Optional[str] = None,
+        session_id: Optional[str] = None,
+        user_agent: Optional[str] = None,
+    ) -> bool:
         """
         Soft delete organization (set is_active=False).
 
         Args:
-            org_id: Organization ID (Firestore document ID)
+            org_id: Organization ID
+            deleted_by_user_id: ID of user who deleted this org (for audit)
+            ip_address: Client IP address (for audit)
+            session_id: Session ID (for audit)
+            user_agent: Client user agent (for audit)
 
         Returns:
             True if deleted successfully
@@ -323,31 +411,52 @@ class OrganizationService:
             OrganizationNotFoundError: If organization not found
         """
         try:
-            # Get organization
-            doc_ref = get_collection(self.COLLECTION_NAME).document(org_id)
-            doc = await doc_ref.get()
+            async with db.session() as session:
+                stmt = select(OrganizationModel).where(
+                    OrganizationModel.id == org_id,
+                    OrganizationModel.is_active == True
+                )
+                result = await session.execute(stmt)
+                org_model = result.scalar_one_or_none()
 
-            if not doc.exists:
-                raise OrganizationNotFoundError(
-                    f"Organization with ID {org_id} not found"
+                if not org_model:
+                    raise OrganizationNotFoundError(
+                        f"Organization with ID {org_id} not found"
+                    )
+
+                # Capture org info for audit before delete
+                deleted_org_info = {
+                    "name": org_model.name,
+                    "domain": org_model.domain,
+                    "plan_type": org_model.plan_type,
+                }
+
+                # Soft delete
+                org_model.is_active = False
+                org_model.updated_at = datetime.now(timezone.utc)
+                await session.flush()
+
+                self.logger.info("Organization deleted", org_id=org_id, name=org_model.name)
+
+                # Audit logging (non-blocking)
+                asyncio.create_task(
+                    audit_service.log_event(
+                        org_id=org_id,
+                        action=AuditAction.DELETE,
+                        entity_type=AuditEntityType.ORGANIZATION,
+                        entity_id=org_id,
+                        user_id=deleted_by_user_id,
+                        details={
+                            "deleted_values": deleted_org_info,
+                            "operation": "delete",
+                        },
+                        ip_address=ip_address,
+                        session_id=session_id,
+                        user_agent=user_agent,
+                    )
                 )
 
-            org_data = doc.to_dict()
-            org = Organization.from_dict(org_data, doc.id)
-
-            if not org.is_active:
-                raise OrganizationNotFoundError(
-                    f"Organization with ID {org_id} not found"
-                )
-
-            # Soft delete - update is_active to False
-            await doc_ref.update(
-                {"is_active": False, "updated_at": datetime.utcnow().isoformat()}
-            )
-
-            self.logger.info("Organization deleted", org_id=org_id, name=org.name)
-
-            return True
+                return True
 
         except OrganizationNotFoundError:
             raise
@@ -370,33 +479,25 @@ class OrganizationService:
             Organization response or None if not found
         """
         try:
-            org = await self._get_organization_by_name(name)
-            return OrganizationResponse.model_validate(org) if org else None
+            async with db.session() as session:
+                stmt = select(OrganizationModel).where(
+                    OrganizationModel.name == name,
+                    OrganizationModel.is_active == True
+                )
+                result = await session.execute(stmt)
+                org_model = result.scalar_one_or_none()
+
+                if not org_model:
+                    return None
+
+                org = self._model_to_pydantic(org_model)
+                return OrganizationResponse.model_validate(org)
+
         except Exception as e:
             self.logger.error(
                 "Error getting organization by name", name=name, error=str(e)
             )
             raise
-
-    # Private helper methods
-    async def _get_organization_by_name(self, name: str) -> Optional[Organization]:
-        """Get organization by name (internal method)."""
-        try:
-            collection = get_collection(self.COLLECTION_NAME)
-            query = collection.where(filter=FieldFilter("name", "==", name))
-
-            docs = query.stream()
-            async for doc in docs:
-                org_data = doc.to_dict()
-                org = Organization.from_dict(org_data, doc.id)
-                return org
-
-            return None
-        except Exception as e:
-            self.logger.error(
-                "Error getting organization by name", name=name, error=str(e)
-            )
-            return None
 
 
 # Global service instance

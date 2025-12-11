@@ -6,7 +6,7 @@ Designed to be easily replaceable with enterprise JWT authentication later.
 """
 
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, Optional, Any
 from dataclasses import dataclass
 from threading import Lock
@@ -36,26 +36,26 @@ class SimpleSession:
 
     def is_expired(self) -> bool:
         """Check if session is expired."""
-        return datetime.utcnow() > self.expires_at
+        return datetime.now(timezone.utc) > self.expires_at
 
     def is_refresh_expired(self) -> bool:
         """Check if refresh token is expired."""
         if not self.refresh_expires_at:
             return True
-        return datetime.utcnow() > self.refresh_expires_at
+        return datetime.now(timezone.utc) > self.refresh_expires_at
 
     def is_in_grace_period(self, grace_minutes: int = 10) -> bool:
         """Check if session is in grace period before expiration."""
         if self.is_expired():
             return False
         grace_time = self.expires_at - timedelta(minutes=grace_minutes)
-        return datetime.utcnow() >= grace_time
+        return datetime.now(timezone.utc) >= grace_time
 
     def time_until_expiry(self) -> int:
         """Get seconds until session expiry."""
         if self.is_expired():
             return 0
-        return int((self.expires_at - datetime.utcnow()).total_seconds())
+        return int((self.expires_at - datetime.now(timezone.utc)).total_seconds())
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert session to dictionary for API responses."""
@@ -123,7 +123,7 @@ class SimpleAuthManager:
         with self._lock:
             session_id = str(uuid.uuid4())
             refresh_token = str(uuid.uuid4())
-            now = datetime.utcnow()
+            now = datetime.now(timezone.utc)
             expires_at = now + timedelta(hours=self.session_duration_hours)
             refresh_expires_at = now + timedelta(days=self.refresh_duration_days)
 
@@ -184,7 +184,7 @@ class SimpleAuthManager:
                 return None
 
             # Update last used time
-            session.last_used = datetime.utcnow()
+            session.last_used = datetime.now(timezone.utc)
 
             logger.debug(
                 "Session accessed",
@@ -266,7 +266,7 @@ class SimpleAuthManager:
             Number of sessions cleaned up
         """
         with self._lock:
-            now = datetime.utcnow()
+            now = datetime.now(timezone.utc)
             expired_sessions = []
 
             for session_id, session in self._sessions.items():
@@ -340,7 +340,7 @@ class SimpleAuthManager:
             # Create new session with new tokens (token rotation)
             new_session_id = str(uuid.uuid4())
             new_refresh_token = str(uuid.uuid4())
-            now = datetime.utcnow()
+            now = datetime.now(timezone.utc)
             new_expires_at = now + timedelta(hours=self.session_duration_hours)
             new_refresh_expires_at = now + timedelta(days=self.refresh_duration_days)
 
@@ -555,7 +555,7 @@ def get_current_user_simple(
             )
 
         # Update last used time
-        session.last_used = datetime.utcnow()
+        session.last_used = datetime.now(timezone.utc)
 
     logger.debug(
         "User authenticated via session",

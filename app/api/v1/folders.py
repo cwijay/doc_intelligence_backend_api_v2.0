@@ -286,8 +286,9 @@ async def update_folder(
     try:
         logger.info("Updating folder", org_id=org_id, folder_id=folder_id)
 
-        # For now, we only support name updates
-        # TODO: Implement full update functionality when needed
+        # Currently only name field is supported for updates.
+        # Folder rename requires path recalculation for all descendants,
+        # which is handled in the folder_service.rename_folder method.
         if folder.name is None:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,

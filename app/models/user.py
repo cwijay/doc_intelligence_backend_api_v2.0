@@ -1,8 +1,8 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Dict, Any, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, field_serializer
 
 
 class UserRole(str, Enum):
@@ -14,12 +14,10 @@ class UserRole(str, Enum):
 
 
 class User(BaseModel):
-    """User Firestore model for multi-tenant user management."""
+    """User model for multi-tenant user management."""
 
-    # Primary key - Firestore document ID (managed by Firestore)
-    id: Optional[str] = Field(
-        None, description="Unique user identifier (Firestore document ID)"
-    )
+    # Primary key
+    id: Optional[str] = Field(None, description="Unique user identifier")
 
     # Multi-tenancy
     org_id: str = Field(..., description="Organization ID (foreign key)")
@@ -42,28 +40,29 @@ class User(BaseModel):
 
     # Timestamps
     created_at: datetime = Field(
-        default_factory=datetime.utcnow, description="When user was created"
+        default_factory=lambda: datetime.now(timezone.utc),
+        description="When user was created",
     )
     last_login: Optional[datetime] = Field(None, description="When user last logged in")
     updated_at: datetime = Field(
-        default_factory=datetime.utcnow, description="When user was last updated"
+        default_factory=lambda: datetime.now(timezone.utc),
+        description="When user was last updated",
     )
 
-    class Config:
-        """Pydantic configuration."""
+    model_config = ConfigDict(use_enum_values=True)
 
-        use_enum_values = True
-        json_encoders = {
-            datetime: lambda dt: dt.isoformat() if dt else None,
-        }
+    @field_serializer("created_at", "updated_at", "last_login")
+    def serialize_datetime(self, value: Optional[datetime]) -> Optional[str]:
+        """Serialize datetime fields to ISO format."""
+        return value.isoformat() if value else None
 
     def __repr__(self) -> str:
         return f"<User(id={self.id}, email='{self.email}', org_id='{self.org_id}', role='{self.role}')>"
 
     def to_dict(self) -> Dict[str, Any]:
-        """Convert user to dictionary for Firestore."""
+        """Convert user to dictionary for database storage."""
         data = self.model_dump(exclude={"id"})
-        # Convert datetime objects to ISO format for Firestore
+        # Convert datetime objects to ISO format
         if "created_at" in data and data["created_at"]:
             data["created_at"] = self.created_at.isoformat()
         if "updated_at" in data and data["updated_at"]:
@@ -74,7 +73,7 @@ class User(BaseModel):
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any], doc_id: Optional[str] = None) -> "User":
-        """Create User from Firestore document data."""
+        """Create User from database record."""
         # Handle datetime parsing
         if "created_at" in data and isinstance(data["created_at"], str):
             data["created_at"] = datetime.fromisoformat(data["created_at"])
@@ -116,9 +115,9 @@ class User(BaseModel):
 
     def update_timestamp(self):
         """Update the updated_at timestamp."""
-        self.updated_at = datetime.utcnow()
+        self.updated_at = datetime.now(timezone.utc)
 
     def update_last_login(self):
         """Update the last_login timestamp."""
-        self.last_login = datetime.utcnow()
+        self.last_login = datetime.now(timezone.utc)
         self.update_timestamp()

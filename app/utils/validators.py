@@ -5,6 +5,7 @@ from urllib.parse import urlparse
 
 try:
     import dns.resolver
+    import dns.exception
 
     DNS_AVAILABLE = True
 except ImportError:
@@ -135,13 +136,16 @@ def validate_domain_dns(domain: str) -> bool:
     try:
         dns.resolver.resolve(domain, "A")
         return True
-    except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer, Exception):
+    except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer, dns.resolver.Timeout, dns.resolver.NoNameservers):
         try:
             # Try MX record as fallback
             dns.resolver.resolve(domain, "MX")
             return True
-        except:
+        except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer, dns.resolver.Timeout, dns.resolver.NoNameservers, dns.exception.DNSException):
             return False
+    except dns.exception.DNSException:
+        # Catch any other DNS-specific exceptions
+        return False
 
 
 def validate_organization_settings(settings: Dict[str, Any]) -> Dict[str, Any]:

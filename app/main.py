@@ -16,18 +16,14 @@ from app.core.simple_auth import get_current_user_dict
 from app.core.config import settings
 from app.core.logging import configure_logging, setup_request_logging, get_logger
 from app.core.exceptions import setup_exception_handlers
-from app.core.firebase_client import init_firebase, close_firebase, get_firebase_health
+from app.core.db_client import db
 
 # Configure logging first
 configure_logging()
 logger = get_logger(__name__)
 
 # Technology Stack:
-# - Database: Google Cloud Firestore
-# - Caching: Redis (GCP)
-# - Vector DB: Pinecone
-# - LLM: OpenAI GPT-4o-mini
-# - Document Parser: LlamaParse
+# - Database: PostgreSQL (Cloud SQL)
 # - File Storage: Google Cloud Storage
 # - Framework: FastAPI with async/await
 
@@ -46,17 +42,26 @@ async def lifespan(app: FastAPI):
 
     startup_tasks = []
 
-    # Initialize Firebase connection
+    # Initialize database connection
     try:
-        await init_firebase()
-        startup_tasks.append("Firebase initialized")
+        engine = await db.get_engine_async()
+        if engine:
+            # Create tables in development mode
+            if settings.is_development:
+                await db.create_tables()
+                startup_tasks.append("Database tables created/verified")
+
+            # Test connection
+            if await db.test_connection():
+                startup_tasks.append("PostgreSQL connected")
+            else:
+                logger.warning("Database connection test failed")
+        else:
+            logger.warning("Database engine not initialized")
     except Exception as e:
-        logger.error("Failed to initialize Firebase", error=str(e))
+        logger.error("Failed to initialize database", error=str(e))
         if settings.ENVIRONMENT.lower() == "production":
             raise
-
-    # Additional services can be initialized here
-    # (Redis, Pinecone, etc. when implemented)
 
     logger.info("Application startup completed", tasks=startup_tasks)
 
@@ -67,15 +72,12 @@ async def lifespan(app: FastAPI):
 
     shutdown_tasks = []
 
-    # Close Firebase connections
+    # Close database connections
     try:
-        await close_firebase()
-        shutdown_tasks.append("Firebase closed")
+        await db.close_all()
+        shutdown_tasks.append("Database connections closed")
     except Exception as e:
-        logger.error("Error closing Firebase", error=str(e))
-
-    # Close additional services here when implemented
-    # (Redis, Pinecone, etc.)
+        logger.error("Error closing database", error=str(e))
 
     logger.info("Application shutdown completed", tasks=shutdown_tasks)
 
@@ -88,18 +90,11 @@ app = FastAPI(
     description="""# 🚀 Document Intelligence API
 
 ## Overview
-FastAPI-based document processing API with AI features. Supports PDF/XLSX upload, processing, and intelligent content generation with multi-tenant organization support.
-
-## 🤖 AI Features
-- Document summarization
-- FAQ generation  
-- Question extraction
-- AI content stored in Firestore
+FastAPI-based document management API. Supports PDF/XLSX upload, storage, and organization with multi-tenant support.
 
 ## 💻 For Next.js Developers
 - TypeScript-compatible endpoints
 - Generate types from OpenAPI spec
-- All AI fields are optional for backward compatibility
 
 ## 🔐 Authentication
 **Session-based JWT** with automatic refresh:
@@ -113,8 +108,8 @@ FastAPI-based document processing API with AI features. Supports PDF/XLSX upload
 - `GET /api/v1/auth/validate` - Check token validity
 
 ## 📄 Documents
-**File Support:** PDF, XLSX (max 50MB)  
-**Storage:** Google Cloud Storage + Firestore metadata
+**File Support:** PDF, XLSX (max 50MB)
+**Storage:** Google Cloud Storage + PostgreSQL metadata
 
 **Upload Methods:**
 - `target_path` (recommended): Full path control
@@ -237,7 +232,7 @@ def custom_openapi():
             },
             {
                 "name": "Documents",
-                "description": "Document upload, processing, and AI content management",
+                "description": "Document upload, storage, and management",
             },
             {
                 "name": "Organizations",
@@ -353,63 +348,6 @@ def custom_openapi():
                 }
             },
         },
-        "DocumentResponseWithAI": {
-            "summary": "Document with AI content",
-            "description": "Example of a document response including AI-generated content",
-            "value": {
-                "id": "doc-123e4567-e89b-12d3-a456-426614174000",
-                "org_id": "oJIChgDgktkF30dAPy2c",
-                "filename": "quarterly-report-q4-2024.pdf",
-                "original_filename": "Q4 2024 Quarterly Financial Report.pdf",
-                "file_type": "pdf",
-                "file_size": 2048576,
-                "storage_path": "TechCorp/original/reports/quarterly-report-q4-2024.pdf",
-                "status": "parsed",
-                "folder_id": None,
-                "metadata": {"source": "web_upload", "category": "financial"},
-                "file_content": "# Q4 2024 Financial Report...",
-                "summary": "This quarterly report demonstrates strong performance with 15% revenue growth compared to the previous year...",
-                "faq": [
-                    {
-                        "question": "What was the revenue growth in Q4 2024?",
-                        "answer": "The company achieved 15% revenue growth compared to Q4 2023.",
-                    },
-                    {
-                        "question": "Which segments performed best?",
-                        "answer": "Cloud services and AI development showed the strongest growth.",
-                    },
-                ],
-                "questions": [
-                    "What are the key performance indicators for this quarter?",
-                    "How do these results compare to previous quarters?",
-                    "What are the growth projections for 2025?",
-                ],
-                "uploaded_by": "jhYXgm0s4avwacnBSXH9",
-                "is_active": True,
-                "created_at": "2024-12-15T09:30:00Z",
-                "updated_at": "2024-12-15T10:30:00Z",
-            },
-        },
-        "DocumentSummarizeResponseUpdated": {
-            "summary": "Updated document summarization response",
-            "description": "Response showing summary saved to Firestore instead of GCS",
-            "value": {
-                "success": True,
-                "document_id": "doc-123e4567-e89b-12d3-a456-426614174000",
-                "filename": "quarterly-report-q4-2024.pdf",
-                "original_storage_path": "TechCorp/original/reports/quarterly-report-q4-2024.pdf",
-                "summary_content": "# Q4 2024 Executive Summary\n\n## Financial Performance\n- Revenue growth: 15% YoY\n- Net profit margin: 12.3%\n- EBITDA: $2.4M\n\n## Key Highlights\n- Cloud services expansion accelerated\n- AI initiatives successfully launched\n- Strong customer retention: 94%\n\n## Strategic Outlook\n- Continued investment in AI development\n- Market expansion into new territories\n- Enhanced customer experience initiatives",
-                "summary_metadata": {
-                    "created_at": "2024-12-15T10:30:00Z",
-                    "model": "gpt-4o-mini",
-                    "content_length": 15420,
-                    "summary_length": 542,
-                    "processing_time_ms": 1850,
-                },
-                "saved_to_firestore": True,
-                "timestamp": "2024-12-15T10:30:00Z",
-            },
-        },
     }
 
     app.openapi_schema = openapi_schema
@@ -450,9 +388,14 @@ setup_request_logging(app)
 
 # Add security middleware
 if settings.ENVIRONMENT.lower() == "production":
+    # Configure allowed hosts for production
+    allowed_hosts = ["*.run.app", "*.biztobricks.com"]
+    if settings.FRONTEND_DOMAIN:
+        allowed_hosts.append(settings.FRONTEND_DOMAIN)
+        allowed_hosts.append(f"*.{settings.FRONTEND_DOMAIN}")
     app.add_middleware(
         TrustedHostMiddleware,
-        allowed_hosts=["*"],  # Configure this properly for production
+        allowed_hosts=allowed_hosts,
     )
 
 
@@ -486,17 +429,35 @@ async def root() -> Dict[str, Any]:
 # Health check endpoint
 @app.get("/health", tags=["Health"])
 async def health_check() -> Dict[str, Any]:
-    """Simple health check endpoint."""
+    """
+    Health check endpoint with database connectivity verification.
+
+    Returns 200 if healthy, 503 if database is unavailable.
+    Used by load balancers and orchestration tools.
+    """
     try:
-        # Get basic health status
-        health_status = {
+        # Check database connection (critical for service health)
+        db_available = await db.test_connection(timeout=5.0)
+
+        if not db_available:
+            logger.warning("Health check failed: database unavailable")
+            return JSONResponse(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                content={
+                    "status": "unhealthy",
+                    "timestamp": time.time(),
+                    "version": settings.VERSION,
+                    "database": "unavailable",
+                },
+            )
+
+        return {
             "status": "healthy",
             "timestamp": time.time(),
             "version": settings.VERSION,
             "environment": settings.ENVIRONMENT,
+            "database": "connected",
         }
-
-        return health_status
 
     except Exception as e:
         logger.error("Health check failed", error=str(e))
@@ -516,13 +477,11 @@ async def health_check() -> Dict[str, Any]:
 async def detailed_status() -> Dict[str, Any]:
     """Detailed status endpoint with service health checks."""
     try:
-        # Get Firebase health
-        firebase_health = await get_firebase_health()
+        # Get database health
+        db_available = await db.test_connection(timeout=5.0)
 
         # Overall status
-        overall_status = "healthy"
-        if not firebase_health.get("firestore_available", False):
-            overall_status = "degraded"
+        overall_status = "healthy" if db_available else "degraded"
 
         status_response = {
             "application": {
@@ -533,11 +492,11 @@ async def detailed_status() -> Dict[str, Any]:
                 "status": overall_status,
             },
             "services": {
-                "firestore": firebase_health,
-                "redis": {"status": "not_implemented"},
-                "pinecone": {"status": "not_implemented"},
-                "openai": {"status": "not_implemented"},
-                "llamaparse": {"status": "not_implemented"},
+                "postgresql": {
+                    "status": "connected" if db_available else "unavailable",
+                    "pool_size": settings.DB_POOL_SIZE,
+                    "max_overflow": settings.DB_MAX_OVERFLOW,
+                },
             },
             "configuration": {
                 "cors_enabled": True,
@@ -548,7 +507,7 @@ async def detailed_status() -> Dict[str, Any]:
             },
             "system": {
                 "timestamp": time.time(),
-                "uptime": time.time(),  # This would need to be calculated properly
+                "uptime": time.time(),
             },
         }
 
@@ -567,15 +526,15 @@ async def detailed_status() -> Dict[str, Any]:
 async def readiness_check() -> Dict[str, Any]:
     """Readiness probe endpoint."""
     try:
-        # Check if critical services are ready
-        firebase_health = await get_firebase_health()
+        # Check if database is ready
+        db_available = await db.test_connection(timeout=5.0)
 
-        if not firebase_health.get("firestore_available", False):
+        if not db_available:
             return JSONResponse(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 content={
                     "ready": False,
-                    "reason": "Firestore not ready",
+                    "reason": "Database not ready",
                     "timestamp": time.time(),
                 },
             )
@@ -614,9 +573,9 @@ async def metrics() -> Dict[str, Any]:
                 "errors": "not_implemented",
                 "response_time": "not_implemented",
             },
-            "firestore": {
-                "connections": "not_implemented",
-                "queries": "not_implemented",
+            "postgresql": {
+                "pool_size": settings.DB_POOL_SIZE,
+                "max_overflow": settings.DB_MAX_OVERFLOW,
             },
             "timestamp": time.time(),
         }
@@ -634,6 +593,7 @@ from app.api.v1.organizations import router as organizations_router
 from app.api.v1.users import router as users_router
 from app.api.v1.password import router as password_router
 from app.api.v1.folders import router as folders_router
+from app.api.v1.audit import router as audit_router
 
 # Import from documents_main.py file (modular structure with save-parsed endpoint)
 from app.api.v1.documents_main import router as documents_router
@@ -657,6 +617,11 @@ app.include_router(password_router, prefix=settings.API_V1_STR, tags=["Password"
 
 # Folder management router
 app.include_router(folders_router, prefix=settings.API_V1_STR, tags=["Folders"])
+
+# Audit log router
+app.include_router(
+    audit_router, prefix=f"{settings.API_V1_STR}/audit", tags=["Audit"]
+)
 
 
 # Direct route handler to bypass redirect issues for /api/v1/documents (no trailing slash)

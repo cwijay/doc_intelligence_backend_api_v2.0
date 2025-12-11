@@ -1,10 +1,10 @@
 import uuid
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional
 
-from pydantic import BaseModel, Field, field_validator, ConfigDict
+from pydantic import BaseModel, Field, field_validator, field_serializer, ConfigDict
 
 
 class DocumentStatus(str, Enum):
@@ -12,8 +12,6 @@ class DocumentStatus(str, Enum):
 
     UPLOADING = "uploading"  # File upload in progress (sync prevention status)
     UPLOADED = "uploaded"
-    PARSING = "parsing"
-    PARSED = "parsed"
     FAILED = "failed"
 
 
@@ -25,11 +23,11 @@ class FileType(str, Enum):
 
 
 class Document(BaseModel):
-    """Document Firestore model for file management."""
+    """Document model for file management."""
 
-    # Primary key - Firestore document ID (managed by Firestore)
+    # Primary key - document ID
     id: Optional[str] = Field(
-        None, description="Unique document identifier (Firestore document ID)"
+        None, description="Unique document identifier"
     )
 
     # Multi-tenancy and organization
@@ -48,38 +46,6 @@ class Document(BaseModel):
         default=DocumentStatus.UPLOADED, description="Document processing status"
     )
 
-    # Parsing results (populated after document parsing)
-    parsed_storage_path: Optional[str] = Field(
-        None, description="GCS path to parsed content (markdown)"
-    )
-    parsing_metadata: Dict[str, Any] = Field(
-        default_factory=dict, description="Metadata from document parsing (pages, etc.)"
-    )
-    file_content: Optional[str] = Field(
-        None, description="Parsed document content (markdown) - synced with GCS"
-    )
-
-    # AI-generated content (stored in Firestore)
-    ai_summary: Optional[str] = Field(None, description="AI-generated document summary")
-    summary_metadata: Dict[str, Any] = Field(
-        default_factory=dict,
-        description="Metadata about summary generation (timestamp, model, etc.)",
-    )
-    ai_faq: Optional[List[Dict[str, str]]] = Field(
-        None, description="AI-generated FAQ items as list of Q&A pairs"
-    )
-    faq_metadata: Dict[str, Any] = Field(
-        default_factory=dict,
-        description="Metadata about FAQ generation (timestamp, model, count, etc.)",
-    )
-    ai_questions: Optional[List[str]] = Field(
-        None, description="AI-generated questions as list of strings"
-    )
-    questions_metadata: Dict[str, Any] = Field(
-        default_factory=dict,
-        description="Metadata about questions generation (timestamp, model, count, etc.)",
-    )
-
     # User tracking
     uploaded_by: str = Field(..., description="User ID who uploaded the document")
 
@@ -95,17 +61,21 @@ class Document(BaseModel):
 
     # Timestamps
     created_at: datetime = Field(
-        default_factory=datetime.utcnow, description="When document was uploaded"
+        default_factory=lambda: datetime.now(timezone.utc), description="When document was uploaded"
     )
     updated_at: datetime = Field(
-        default_factory=datetime.utcnow, description="When document was last updated"
+        default_factory=lambda: datetime.now(timezone.utc), description="When document was last updated"
     )
 
     model_config = ConfigDict(
         use_enum_values=True,
-        json_encoders={datetime: lambda dt: dt.isoformat() if dt else None},
         validate_assignment=True,
     )
+
+    @field_serializer("created_at", "updated_at")
+    def serialize_datetime(self, value: datetime) -> Optional[str]:
+        """Serialize datetime fields to ISO format."""
+        return value.isoformat() if value else None
 
     @field_validator("filename")
     @classmethod
@@ -197,147 +167,13 @@ class Document(BaseModel):
 
         return v
 
-    @field_validator("file_content")
-    @classmethod
-    def validate_file_content(cls, v: Optional[str]) -> Optional[str]:
-        """Validate file content."""
-        if v is None:
-            return v
-
-        # Check content size limits (1MB for Firestore efficiency)
-        max_content_size = 1024 * 1024  # 1MB
-        if len(v.encode("utf-8")) > max_content_size:
-            raise ValueError(
-                f"File content exceeds maximum size of {max_content_size // 1024}KB"
-            )
-
-        # Basic validation for markdown-like content
-        if not isinstance(v, str):
-            raise ValueError("File content must be a string")
-
-        # Strip excessive whitespace but preserve structure
-        v = v.strip()
-
-        return v
-
-    @field_validator("ai_summary")
-    @classmethod
-    def validate_ai_summary(cls, v: Optional[str]) -> Optional[str]:
-        """Validate AI-generated summary."""
-        if v is None:
-            return v
-
-        if not isinstance(v, str):
-            raise ValueError("AI summary must be a string")
-
-        # Check summary size limits (10KB for Firestore efficiency)
-        max_summary_size = 10 * 1024  # 10KB
-        if len(v.encode("utf-8")) > max_summary_size:
-            raise ValueError(
-                f"AI summary exceeds maximum size of {max_summary_size // 1024}KB"
-            )
-
-        # Strip excessive whitespace
-        v = v.strip()
-
-        return v
-
-    @field_validator("ai_faq")
-    @classmethod
-    def validate_ai_faq(
-        cls, v: Optional[List[Dict[str, str]]]
-    ) -> Optional[List[Dict[str, str]]]:
-        """Validate AI-generated FAQ items."""
-        if v is None:
-            return v
-
-        if not isinstance(v, list):
-            raise ValueError("AI FAQ must be a list")
-
-        # Check FAQ count limits (max 20 FAQs)
-        if len(v) > 20:
-            raise ValueError("AI FAQ cannot exceed 20 items")
-
-        for i, item in enumerate(v):
-            if not isinstance(item, dict):
-                raise ValueError(f"FAQ item {i} must be a dictionary")
-
-            # Check required keys
-            if "question" not in item or "answer" not in item:
-                raise ValueError(
-                    f"FAQ item {i} must contain 'question' and 'answer' keys"
-                )
-
-            # Check data types
-            if not isinstance(item["question"], str) or not isinstance(
-                item["answer"], str
-            ):
-                raise ValueError(f"FAQ item {i} question and answer must be strings")
-
-            # Check content
-            if not item["question"].strip() or not item["answer"].strip():
-                raise ValueError(f"FAQ item {i} question and answer cannot be empty")
-
-            # Check individual item size (1KB per FAQ item)
-            item_size = len(item["question"].encode("utf-8")) + len(
-                item["answer"].encode("utf-8")
-            )
-            if item_size > 1024:  # 1KB
-                raise ValueError(f"FAQ item {i} exceeds maximum size of 1KB")
-
-        # Check total FAQ size (15KB for all FAQ items)
-        total_size = sum(len(str(item).encode("utf-8")) for item in v)
-        max_faq_size = 15 * 1024  # 15KB
-        if total_size > max_faq_size:
-            raise ValueError(
-                f"Total AI FAQ size exceeds maximum of {max_faq_size // 1024}KB"
-            )
-
-        return v
-
-    @field_validator("ai_questions")
-    @classmethod
-    def validate_ai_questions(cls, v: Optional[List[str]]) -> Optional[List[str]]:
-        """Validate AI-generated questions."""
-        if v is None:
-            return v
-
-        if not isinstance(v, list):
-            raise ValueError("AI questions must be a list")
-
-        # Check questions count limits (max 20 questions)
-        if len(v) > 20:
-            raise ValueError("AI questions cannot exceed 20 items")
-
-        for i, question in enumerate(v):
-            if not isinstance(question, str):
-                raise ValueError(f"Question {i} must be a string")
-
-            # Check content
-            if not question.strip():
-                raise ValueError(f"Question {i} cannot be empty")
-
-            # Check individual question size (500 bytes per question)
-            if len(question.encode("utf-8")) > 500:
-                raise ValueError(f"Question {i} exceeds maximum size of 500 bytes")
-
-        # Check total questions size (10KB for all questions)
-        total_size = sum(len(question.encode("utf-8")) for question in v)
-        max_questions_size = 10 * 1024  # 10KB
-        if total_size > max_questions_size:
-            raise ValueError(
-                f"Total AI questions size exceeds maximum of {max_questions_size // 1024}KB"
-            )
-
-        return v
-
     def __repr__(self) -> str:
         return f"<Document(id={self.id}, filename='{self.filename}', org_id='{self.org_id}', status='{self.status}')>"
 
     def to_dict(self) -> Dict[str, Any]:
-        """Convert document to dictionary for Firestore."""
+        """Convert document to dictionary for database."""
         data = self.model_dump(exclude={"id"})
-        # Convert datetime objects to ISO format for Firestore
+        # Convert datetime objects to ISO format
         if "created_at" in data:
             data["created_at"] = self.created_at.isoformat()
         if "updated_at" in data:
@@ -348,7 +184,7 @@ class Document(BaseModel):
     def from_dict(
         cls, data: Dict[str, Any], doc_id: Optional[str] = None
     ) -> "Document":
-        """Create Document from Firestore document data with enhanced error handling."""
+        """Create Document from database record data with enhanced error handling."""
         try:
             # Create a copy to avoid modifying original data
             clean_data = data.copy()
@@ -363,10 +199,10 @@ class Document(BaseModel):
                             )
                         except ValueError:
                             # If datetime parsing fails, use current time as fallback
-                            clean_data[field] = datetime.utcnow()
+                            clean_data[field] = datetime.now(timezone.utc)
                     elif clean_data[field] is None:
                         # Handle null datetime values
-                        clean_data[field] = datetime.utcnow()
+                        clean_data[field] = datetime.now(timezone.utc)
 
             # Ensure required fields have proper defaults
             if "file_size" in clean_data and (
@@ -473,12 +309,12 @@ class Document(BaseModel):
                 extra={"data": data, "doc_id": doc_id},
             )
             raise ValueError(
-                f"Failed to create Document from Firestore data: {e}"
+                f"Failed to create Document from database data: {e}"
             ) from e
 
     def update_timestamp(self):
         """Update the updated_at timestamp."""
-        self.updated_at = datetime.utcnow()
+        self.updated_at = datetime.now(timezone.utc)
 
     def update_status(self, new_status: DocumentStatus):
         """Update document processing status."""
@@ -490,7 +326,7 @@ class Document(BaseModel):
             self.metadata["status_history"] = []
 
         self.metadata["status_history"].append(
-            {"status": new_status.value, "timestamp": datetime.utcnow().isoformat()}
+            {"status": new_status.value, "timestamp": datetime.now(timezone.utc).isoformat()}
         )
 
     def mark_as_failed(self, error_message: str):
@@ -498,30 +334,8 @@ class Document(BaseModel):
         self.update_status(DocumentStatus.FAILED)
         self.metadata["error"] = {
             "message": error_message,
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         }
-
-    def mark_as_parsed(
-        self,
-        parse_metadata: Optional[Dict[str, Any]] = None,
-        content: Optional[str] = None,
-    ):
-        """Mark document as successfully parsed."""
-        self.update_status(DocumentStatus.PARSED)
-        if parse_metadata:
-            self.metadata["parse_info"] = parse_metadata
-        if content is not None:
-            self.file_content = content
-
-    @property
-    def is_processing(self) -> bool:
-        """Check if document is currently being processed."""
-        return self.status == DocumentStatus.PARSING
-
-    @property
-    def is_ready(self) -> bool:
-        """Check if document is ready for use."""
-        return self.status == DocumentStatus.PARSED
 
     @property
     def has_failed(self) -> bool:
@@ -544,267 +358,6 @@ class Document(BaseModel):
                 return f"{size:.1f} {unit}"
             size /= 1024
         return f"{size:.1f} TB"
-
-    @property
-    def has_content(self) -> bool:
-        """Check if document has parsed content."""
-        return self.file_content is not None and len(self.file_content.strip()) > 0
-
-    @property
-    def content_size(self) -> int:
-        """Get size of file content in bytes."""
-        if not self.file_content:
-            return 0
-        return len(self.file_content.encode("utf-8"))
-
-    @property
-    def content_preview(self) -> str:
-        """Get preview of file content (first 200 characters)."""
-        if not self.file_content:
-            return ""
-        content = self.file_content.strip()
-        if len(content) <= 200:
-            return content
-        return content[:200] + "..."
-
-    @property
-    def has_ai_summary(self) -> bool:
-        """Check if document has AI-generated summary."""
-        return self.ai_summary is not None and len(self.ai_summary.strip()) > 0
-
-    @property
-    def summary_preview(self) -> str:
-        """Get preview of AI summary (first 150 characters)."""
-        if not self.ai_summary:
-            return ""
-        summary = self.ai_summary.strip()
-        if len(summary) <= 150:
-            return summary
-        return summary[:150] + "..."
-
-    @property
-    def ai_content_size(self) -> int:
-        """Get size of AI summary content in bytes."""
-        if self.ai_summary:
-            return len(self.ai_summary.encode("utf-8"))
-        return 0
-
-    @property
-    def has_ai_faq(self) -> bool:
-        """Check if document has AI-generated FAQ."""
-        return self.ai_faq is not None and len(self.ai_faq) > 0
-
-    @property
-    def faq_count(self) -> int:
-        """Get number of FAQ items."""
-        return len(self.ai_faq) if self.ai_faq else 0
-
-    @property
-    def faq_preview(self) -> str:
-        """Get preview of AI FAQ (first question and partial answer)."""
-        if not self.ai_faq or len(self.ai_faq) == 0:
-            return ""
-
-        first_faq = self.ai_faq[0]
-        question = first_faq.get("question", "").strip()
-        answer = first_faq.get("answer", "").strip()
-
-        if not question:
-            return ""
-
-        # Truncate answer to 100 characters
-        if len(answer) > 100:
-            answer = answer[:100] + "..."
-
-        return f"Q: {question}\nA: {answer}"
-
-    @property
-    def ai_faq_size(self) -> int:
-        """Get size of AI FAQ content in bytes."""
-        if self.ai_faq:
-            return sum(len(str(item).encode("utf-8")) for item in self.ai_faq)
-        return 0
-
-    @property
-    def has_ai_questions(self) -> bool:
-        """Check if document has AI-generated questions."""
-        return self.ai_questions is not None and len(self.ai_questions) > 0
-
-    @property
-    def questions_count(self) -> int:
-        """Get number of questions."""
-        return len(self.ai_questions) if self.ai_questions else 0
-
-    @property
-    def questions_preview(self) -> str:
-        """Get preview of AI questions (first 3 questions)."""
-        if not self.ai_questions or len(self.ai_questions) == 0:
-            return ""
-
-        # Show up to first 3 questions
-        preview_questions = self.ai_questions[:3]
-        return "\n".join(
-            f"{i+1}. {question}" for i, question in enumerate(preview_questions)
-        )
-
-    @property
-    def ai_questions_size(self) -> int:
-        """Get size of AI questions content in bytes."""
-        if self.ai_questions:
-            return sum(len(question.encode("utf-8")) for question in self.ai_questions)
-        return 0
-
-    def update_content(self, content: str):
-        """Update document content and timestamp."""
-        self.file_content = content
-        self.update_timestamp()
-
-        # Add content update to metadata
-        if "content_history" not in self.metadata:
-            self.metadata["content_history"] = []
-
-        self.metadata["content_history"].append(
-            {
-                "action": "content_updated",
-                "size": self.content_size,
-                "timestamp": datetime.utcnow().isoformat(),
-            }
-        )
-
-    def clear_content(self):
-        """Clear document content (e.g., when reverting to binary-only)."""
-        self.file_content = None
-        self.update_timestamp()
-
-        # Add content clear to metadata
-        if "content_history" not in self.metadata:
-            self.metadata["content_history"] = []
-
-        self.metadata["content_history"].append(
-            {"action": "content_cleared", "timestamp": datetime.utcnow().isoformat()}
-        )
-
-    def update_ai_summary(
-        self,
-        summary: Optional[str],
-        generation_metadata: Optional[Dict[str, Any]] = None,
-    ):
-        """Update AI-generated summary and timestamp."""
-        self.ai_summary = summary
-        self.update_timestamp()
-
-        # Update summary metadata
-        if generation_metadata:
-            self.summary_metadata = generation_metadata
-
-        # Add summary update to metadata
-        if "ai_content_history" not in self.metadata:
-            self.metadata["ai_content_history"] = []
-
-        self.metadata["ai_content_history"].append(
-            {
-                "action": "summary_updated",
-                "size": len(summary.encode("utf-8")) if summary else 0,
-                "timestamp": datetime.utcnow().isoformat(),
-            }
-        )
-
-    def update_ai_faq(
-        self,
-        faq: Optional[List[Dict[str, str]]],
-        generation_metadata: Optional[Dict[str, Any]] = None,
-    ):
-        """Update AI-generated FAQ and timestamp."""
-        self.ai_faq = faq
-        self.update_timestamp()
-
-        # Update FAQ metadata
-        if generation_metadata:
-            self.faq_metadata = generation_metadata
-
-        # Add FAQ update to metadata
-        if "ai_content_history" not in self.metadata:
-            self.metadata["ai_content_history"] = []
-
-        self.metadata["ai_content_history"].append(
-            {
-                "action": "faq_updated",
-                "count": len(faq) if faq else 0,
-                "size": self.ai_faq_size,
-                "timestamp": datetime.utcnow().isoformat(),
-            }
-        )
-
-    def update_ai_questions(
-        self,
-        questions: Optional[List[str]],
-        generation_metadata: Optional[Dict[str, Any]] = None,
-    ):
-        """Update AI-generated questions and timestamp."""
-        self.ai_questions = questions
-        self.update_timestamp()
-
-        # Update questions metadata
-        if generation_metadata:
-            self.questions_metadata = generation_metadata
-
-        # Add questions update to metadata
-        if "ai_content_history" not in self.metadata:
-            self.metadata["ai_content_history"] = []
-
-        self.metadata["ai_content_history"].append(
-            {
-                "action": "questions_updated",
-                "count": len(questions) if questions else 0,
-                "size": self.ai_questions_size,
-                "timestamp": datetime.utcnow().isoformat(),
-            }
-        )
-
-    def clear_ai_summary(self):
-        """Clear AI-generated summary."""
-        self.ai_summary = None
-        self.summary_metadata = {}
-        self.update_timestamp()
-
-        # Add AI content clear to metadata
-        if "ai_content_history" not in self.metadata:
-            self.metadata["ai_content_history"] = []
-
-        self.metadata["ai_content_history"].append(
-            {"action": "ai_summary_cleared", "timestamp": datetime.utcnow().isoformat()}
-        )
-
-    def clear_ai_faq(self):
-        """Clear AI-generated FAQ."""
-        self.ai_faq = None
-        self.faq_metadata = {}
-        self.update_timestamp()
-
-        # Add AI content clear to metadata
-        if "ai_content_history" not in self.metadata:
-            self.metadata["ai_content_history"] = []
-
-        self.metadata["ai_content_history"].append(
-            {"action": "ai_faq_cleared", "timestamp": datetime.utcnow().isoformat()}
-        )
-
-    def clear_ai_questions(self):
-        """Clear AI-generated questions."""
-        self.ai_questions = None
-        self.questions_metadata = {}
-        self.update_timestamp()
-
-        # Add AI content clear to metadata
-        if "ai_content_history" not in self.metadata:
-            self.metadata["ai_content_history"] = []
-
-        self.metadata["ai_content_history"].append(
-            {
-                "action": "ai_questions_cleared",
-                "timestamp": datetime.utcnow().isoformat(),
-            }
-        )
 
     def generate_storage_path(
         self, org_name: str, folder_name: Optional[str] = None
@@ -909,12 +462,9 @@ class Document(BaseModel):
             True if transition is valid, False otherwise
         """
         valid_transitions = {
-            DocumentStatus.UPLOADED: [DocumentStatus.PARSING, DocumentStatus.FAILED],
-            DocumentStatus.PARSING: [DocumentStatus.PARSED, DocumentStatus.FAILED],
-            DocumentStatus.PARSED: [
-                DocumentStatus.FAILED
-            ],  # Can fail during later processing
-            DocumentStatus.FAILED: [DocumentStatus.PARSING],  # Can retry
+            DocumentStatus.UPLOADING: [DocumentStatus.UPLOADED, DocumentStatus.FAILED],
+            DocumentStatus.UPLOADED: [DocumentStatus.FAILED],
+            DocumentStatus.FAILED: [DocumentStatus.UPLOADED],  # Can retry upload
         }
 
         return new_status in valid_transitions.get(self.status, [])

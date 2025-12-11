@@ -2,20 +2,26 @@
 Document CRUD Service - Basic CRUD operations for document lifecycle management.
 
 This service handles core document lifecycle operations:
-- Document creation with two-phase commit (GCS + Firestore)
+- Document creation with two-phase commit (GCS + PostgreSQL)
 - Document retrieval with metadata enrichment
 - Document status updates and transitions
 - Document deletion with cleanup operations
 - Organization and folder name resolution
 """
 
+import asyncio
 from typing import Optional, Dict, Any
-from datetime import datetime
+from datetime import datetime, timezone
+from uuid import uuid4
+
+from sqlalchemy import select
 from fastapi import UploadFile
 
 from app.models.document import Document, DocumentStatus
 from app.models.schemas import DocumentResponse, DocumentUploadResponse
 from app.core.gcs_client import gcs_client, GCSClientError
+from app.core.db_models import DocumentModel, AuditAction, AuditEntityType
+from app.services.audit_service import audit_service
 from .document_base_service import (
     DocumentBaseService,
     DocumentNotFoundError,
@@ -38,62 +44,24 @@ class DocumentCrudService(DocumentBaseService):
         self.org_service = organization_service
         self.folder_service = folder_service
 
-    async def _get_organization_name(self, org_id: str) -> str:
-        """
-        Get organization name from organization ID.
-
-        Args:
-            org_id: Organization ID
-
-        Returns:
-            Organization name
-
-        Raises:
-            DocumentValidationError: If organization not found
-        """
-        try:
-            org_response = await self.org_service.get_organization(org_id)
-            return org_response.name
-        except Exception as e:
-            self.logger.error(
-                "Failed to get organization name", org_id=org_id, error=str(e)
-            )
-            raise DocumentValidationError(
-                f"Could not fetch organization name for ID {org_id}: {e}"
-            )
-
-    async def _get_folder_name(
-        self, org_id: str, folder_id: Optional[str]
-    ) -> Optional[str]:
-        """
-        Get folder name from folder ID.
-
-        Args:
-            org_id: Organization ID
-            folder_id: Folder ID (None for root)
-
-        Returns:
-            Folder name or None for root
-
-        Raises:
-            DocumentValidationError: If folder not found
-        """
-        if folder_id is None:
-            return None
-
-        try:
-            folder_response = await self.folder_service.get_folder(org_id, folder_id)
-            return folder_response.name
-        except Exception as e:
-            self.logger.error(
-                "Failed to get folder name",
-                org_id=org_id,
-                folder_id=folder_id,
-                error=str(e),
-            )
-            raise DocumentValidationError(
-                f"Could not fetch folder name for ID {folder_id}: {e}"
-            )
+    def _model_to_pydantic(self, model: DocumentModel) -> Document:
+        """Convert SQLAlchemy model to Pydantic model."""
+        return Document(
+            id=model.id,
+            org_id=model.organization_id,
+            folder_id=model.folder_id,
+            filename=model.filename,
+            original_filename=model.original_filename,
+            file_type=model.file_type,
+            file_size=model.file_size,
+            storage_path=model.storage_path,
+            status=model.status,
+            uploaded_by=model.uploaded_by,
+            is_active=model.is_active,
+            metadata=model.doc_metadata or {},
+            created_at=model.created_at,
+            updated_at=model.updated_at,
+        )
 
     async def create_document(
         self,
@@ -105,6 +73,9 @@ class DocumentCrudService(DocumentBaseService):
         metadata: Optional[Dict[str, Any]] = None,
         validation_service=None,
         storage_service=None,
+        ip_address: Optional[str] = None,
+        session_id: Optional[str] = None,
+        user_agent: Optional[str] = None,
     ) -> DocumentUploadResponse:
         """
         Upload and create a new document with two-phase commit.
@@ -114,10 +85,13 @@ class DocumentCrudService(DocumentBaseService):
             file: Uploaded file
             user_id: ID of user uploading the document
             folder_id: Target folder ID (optional)
-            target_path: Custom path where file should be saved (optional, overrides folder_id)
+            target_path: Custom path where file should be saved (optional)
             metadata: Additional metadata (optional)
             validation_service: Validation service dependency
             storage_service: Storage service dependency
+            ip_address: Client IP address (for audit)
+            session_id: Session ID (for audit)
+            user_agent: Client user agent (for audit)
 
         Returns:
             Document upload response
@@ -126,6 +100,8 @@ class DocumentCrudService(DocumentBaseService):
             DocumentValidationError: If validation fails
             DocumentUploadError: If upload fails
         """
+        document_id = None
+
         try:
             # Validate file using validation service
             file_type, content_type = validation_service._validate_file_upload(file)
@@ -141,69 +117,39 @@ class DocumentCrudService(DocumentBaseService):
                     f"File size exceeds maximum limit of {max_mb}MB"
                 )
 
-            # Basic virus scan using validation service
+            # Basic virus scan
             if not await validation_service._basic_virus_scan(content, file.filename):
                 raise DocumentValidationError("File failed security scan")
 
             # Generate document ID and sanitize filename
-            document_id = Document.generate_id()
+            document_id = str(uuid4())
             sanitized_filename = Document.sanitize_filename(file.filename)
 
-            # Enhanced path handling with target_path prioritization
+            # Path handling
             if target_path:
-                # PRIMARY: Use client-specified target path with validation
                 self.logger.info(
                     "Using client-specified target_path",
                     org_id=org_id,
                     original_target_path=target_path,
                 )
-
-                # Validate and sanitize target path for security
                 storage_path = validation_service._validate_target_path(
                     target_path, file.filename
                 )
-
-                self.logger.info(
-                    "Target path validated and will be used",
-                    org_id=org_id,
-                    final_storage_path=storage_path,
-                )
             else:
-                # FALLBACK: Use legacy folder_id approach for backward compatibility
                 self.logger.info(
-                    "No target_path provided, using legacy folder_id approach",
+                    "Using legacy folder_id approach",
                     org_id=org_id,
                     folder_id=folder_id,
                 )
-
                 org_name = await self._get_organization_name(org_id)
-                folder_name = (
-                    await self._get_folder_name(org_id, folder_id)
-                    if folder_id
-                    else None
-                )
+                folder_name = await self._get_folder_name(org_id, folder_id) if folder_id else None
 
-                # Validate folder exists if specified
-                if folder_id and not folder_name:
-                    raise DocumentValidationError(f"Folder {folder_id} not found")
-
-                # Build default path structure
                 if folder_name:
-                    storage_path = (
-                        f"{org_name}/original/{folder_name}/{sanitized_filename}"
-                    )
+                    storage_path = f"{org_name}/original/{folder_name}/{sanitized_filename}"
                 else:
                     storage_path = f"{org_name}/original/root/{sanitized_filename}"
 
-                self.logger.info(
-                    "Legacy path generated",
-                    org_id=org_id,
-                    folder_id=folder_id,
-                    folder_name=folder_name,
-                    final_storage_path=storage_path,
-                )
-
-            # Ensure storage path is unique using storage service
+            # Ensure storage path is unique
             original_storage_path = storage_path
             storage_path = await storage_service._ensure_unique_storage_path(
                 org_id, storage_path, file.filename
@@ -211,11 +157,10 @@ class DocumentCrudService(DocumentBaseService):
 
             if storage_path != original_storage_path:
                 self.logger.info(
-                    "Storage path was modified for uniqueness",
+                    "Storage path modified for uniqueness",
                     org_id=org_id,
                     original_path=original_storage_path,
                     unique_path=storage_path,
-                    reason="path_already_exists",
                 )
 
             # Ensure GCS is available
@@ -225,198 +170,108 @@ class DocumentCrudService(DocumentBaseService):
                     error_msg += f": {gcs_client.initialization_error}"
                 raise DocumentUploadError(error_msg)
 
-            # TWO-PHASE COMMIT: Phase 1 - Reserve path in Firestore
-            document = Document(
-                id=document_id,
-                org_id=org_id,
-                folder_id=folder_id,
-                filename=sanitized_filename,
-                original_filename=file.filename,
-                file_type=file_type,
-                file_size=actual_size,
-                storage_path=storage_path,
-                status=DocumentStatus.UPLOADING,  # Indicates incomplete upload
-                uploaded_by=user_id,
-                metadata=metadata or {},
-                created_at=datetime.utcnow(),
-                updated_at=datetime.utcnow(),
-            )
+            # TWO-PHASE COMMIT
+            now = datetime.now(timezone.utc)
+            status_value = DocumentStatus.UPLOADING.value if hasattr(DocumentStatus.UPLOADING, 'value') else DocumentStatus.UPLOADING
 
-            # Phase 1: Create placeholder document in Firestore to reserve the path
-            doc_ref = self._get_collection(org_id).document(document_id)
-            try:
-                await doc_ref.set(document.to_dict())
-                self.logger.info(
-                    "✅ Phase 1: Document path reserved in Firestore",
-                    org_id=org_id,
-                    document_id=document_id,
-                    storage_path=storage_path,
-                    status="uploading",
-                )
-            except Exception as e:
-                self.logger.error(
-                    "❌ Phase 1 failed: Could not reserve document path in Firestore",
-                    org_id=org_id,
-                    document_id=document_id,
-                    storage_path=storage_path,
-                    error=str(e),
-                )
-                raise DocumentUploadError(f"Failed to reserve document path: {e}")
-
-            # Phase 2: Upload file to GCS
-            actual_storage_path = None
-            try:
-                self.logger.info(
-                    "Phase 2: Uploading file to GCS",
-                    org_id=org_id,
-                    document_id=document_id,
+            async with self.db.session() as session:
+                # Phase 1: Create placeholder document in PostgreSQL
+                doc_model = DocumentModel(
+                    id=document_id,
+                    organization_id=org_id,
+                    folder_id=folder_id,
+                    filename=sanitized_filename,
                     original_filename=file.filename,
-                    sanitized_filename=sanitized_filename,
-                    client_target_path=target_path,
-                    final_storage_path=storage_path,
+                    file_type=file_type.value if hasattr(file_type, 'value') else file_type,
                     file_size=actual_size,
-                    content_type=content_type,
-                    path_source="target_path" if target_path else "legacy_folder_id",
-                )
-
-                # Upload directly to the validated storage path
-                actual_storage_path = gcs_client.upload_file_to_path(
                     storage_path=storage_path,
-                    content=content,
-                    content_type=content_type,
+                    status=status_value,
+                    uploaded_by=user_id,
+                    is_active=True,
+                    doc_metadata=metadata or {},
+                    created_at=now,
+                    updated_at=now,
                 )
+
+                session.add(doc_model)
+                await session.flush()
 
                 self.logger.info(
-                    "✅ Phase 2: Document uploaded successfully to GCS",
+                    "Phase 1: Document path reserved in PostgreSQL",
                     org_id=org_id,
                     document_id=document_id,
-                    filename=sanitized_filename,
-                    storage_path=actual_storage_path,
-                    file_size=actual_size,
-                    content_type=content_type,
-                    used_target_path=target_path is not None,
-                    client_specified_path=target_path,
+                    storage_path=storage_path,
                 )
 
-            except GCSClientError as e:
-                self.logger.error(
-                    "❌ Phase 2 failed: GCS upload failed, rolling back Firestore",
-                    org_id=org_id,
-                    document_id=document_id,
-                    filename=file.filename,
-                    error=str(e),
-                )
-
-                # Rollback Phase 1: Delete the placeholder document
+                # Phase 2: Upload file to GCS
                 try:
-                    await doc_ref.delete()
+                    actual_storage_path = gcs_client.upload_file_to_path(
+                        storage_path=storage_path,
+                        content=content,
+                        content_type=content_type,
+                    )
+
                     self.logger.info(
-                        "🔄 Rollback successful: Removed placeholder document from Firestore",
+                        "Phase 2: Document uploaded to GCS",
                         org_id=org_id,
                         document_id=document_id,
+                        storage_path=actual_storage_path,
                     )
-                except Exception as rollback_error:
+
+                except GCSClientError as e:
                     self.logger.error(
-                        "🚨 Rollback failed: Could not remove placeholder document",
+                        "Phase 2 failed: GCS upload failed",
                         org_id=org_id,
                         document_id=document_id,
-                        rollback_error=str(rollback_error),
+                        error=str(e),
                     )
+                    raise DocumentUploadError(f"Failed to upload file to storage: {e}")
 
-                raise DocumentUploadError(f"Failed to upload file to storage: {e}")
+                # Phase 3: Update PostgreSQL document status
+                uploaded_status = DocumentStatus.UPLOADED.value if hasattr(DocumentStatus.UPLOADED, 'value') else DocumentStatus.UPLOADED
+                doc_model.status = uploaded_status
+                doc_model.storage_path = actual_storage_path
+                doc_model.updated_at = datetime.now(timezone.utc)
 
-            # Phase 3: Update Firestore document to mark as successfully uploaded
-            try:
-                document.status = DocumentStatus.UPLOADED
-                document.storage_path = (
-                    actual_storage_path  # Use actual path returned by GCS
-                )
-                document.updated_at = datetime.utcnow()
-
-                # Ensure status is properly converted to string value
-                status_value = (
-                    document.status.value
-                    if hasattr(document.status, "value")
-                    else document.status
-                )
-
-                await doc_ref.update(
-                    {
-                        "status": status_value,
-                        "storage_path": actual_storage_path,
-                        "updated_at": document.updated_at,
-                    }
-                )
+                await session.flush()
 
                 self.logger.info(
-                    "✅ Phase 3: Document status updated to UPLOADED in Firestore",
+                    "Phase 3: Document status updated to UPLOADED",
                     org_id=org_id,
                     document_id=document_id,
-                    filename=sanitized_filename,
-                    final_storage_path=actual_storage_path,
                 )
 
-            except Exception as e:
-                self.logger.error(
-                    "❌ Phase 3 failed: Could not update document status, cleaning up",
-                    org_id=org_id,
-                    document_id=document_id,
-                    error=str(e),
+                document = self._model_to_pydantic(doc_model)
+                document_response = DocumentResponse.model_validate(document)
+
+                # Audit logging (non-blocking)
+                asyncio.create_task(
+                    audit_service.log_event(
+                        org_id=org_id,
+                        action=AuditAction.UPLOAD,
+                        entity_type=AuditEntityType.DOCUMENT,
+                        entity_id=document_id,
+                        user_id=user_id,
+                        details={
+                            "filename": sanitized_filename,
+                            "original_filename": file.filename,
+                            "file_type": file_type.value if hasattr(file_type, 'value') else file_type,
+                            "file_size": actual_size,
+                            "storage_path": actual_storage_path,
+                            "folder_id": folder_id,
+                            "operation": "upload",
+                        },
+                        ip_address=ip_address,
+                        session_id=session_id,
+                        user_agent=user_agent,
+                    )
                 )
 
-                # Rollback: Delete both GCS file and Firestore document
-                cleanup_errors = []
-
-                # Try to delete GCS file
-                if actual_storage_path:
-                    try:
-                        gcs_client.delete_document_file(actual_storage_path)
-                        self.logger.info(
-                            "🔄 Rollback: Cleaned up GCS file",
-                            storage_path=actual_storage_path,
-                        )
-                    except Exception as gcs_cleanup_error:
-                        cleanup_errors.append(
-                            f"GCS cleanup failed: {gcs_cleanup_error}"
-                        )
-                        self.logger.error(
-                            "🚨 GCS cleanup failed during rollback",
-                            storage_path=actual_storage_path,
-                            error=str(gcs_cleanup_error),
-                        )
-
-                # Try to delete Firestore document
-                try:
-                    await doc_ref.delete()
-                    self.logger.info(
-                        "🔄 Rollback: Removed document from Firestore",
-                        org_id=org_id,
-                        document_id=document_id,
-                    )
-                except Exception as firestore_cleanup_error:
-                    cleanup_errors.append(
-                        f"Firestore cleanup failed: {firestore_cleanup_error}"
-                    )
-                    self.logger.error(
-                        "🚨 Firestore cleanup failed during rollback",
-                        org_id=org_id,
-                        document_id=document_id,
-                        error=str(firestore_cleanup_error),
-                    )
-
-                error_msg = f"Failed to finalize document upload: {e}"
-                if cleanup_errors:
-                    error_msg += f" (Cleanup issues: {'; '.join(cleanup_errors)})"
-
-                raise DocumentUploadError(error_msg)
-
-            document_response = DocumentResponse.model_validate(document)
-
-            return DocumentUploadResponse(
-                success=True,
-                message="Document uploaded successfully",
-                document=document_response,
-            )
+                return DocumentUploadResponse(
+                    success=True,
+                    message="Document uploaded successfully",
+                    document=document_response,
+                )
 
         except (DocumentValidationError, DocumentUploadError):
             raise
@@ -452,29 +307,35 @@ class DocumentCrudService(DocumentBaseService):
             DocumentNotFoundError: If document not found
         """
         try:
-            doc_ref = self._get_collection(org_id).document(document_id)
-            doc = await doc_ref.get()
+            async with self.db.session() as session:
+                stmt = select(DocumentModel).where(
+                    DocumentModel.id == document_id,
+                    DocumentModel.organization_id == org_id,
+                    DocumentModel.is_active == True
+                )
+                result = await session.execute(stmt)
+                doc_model = result.scalar_one_or_none()
 
-            if not doc.exists:
-                raise DocumentNotFoundError(f"Document with ID {document_id} not found")
+                if not doc_model:
+                    raise DocumentNotFoundError(
+                        f"Document with ID {document_id} not found"
+                    )
 
-            document_data = doc.to_dict()
-            document = Document.from_dict(document_data, doc.id)
+                document = self._model_to_pydantic(doc_model)
 
-            if not document.is_active:
-                raise DocumentNotFoundError(f"Document with ID {document_id} not found")
+                # Enrich document metadata
+                if storage_service:
+                    document = await storage_service._enrich_document_metadata(document)
 
-            # Enrich document metadata to ensure complete data
-            document = await storage_service._enrich_document_metadata(document)
+                # Safety validation
+                if validation_service:
+                    document = validation_service._ensure_safe_metadata(document)
 
-            # NUCLEAR SAFETY NET: Final validation to guarantee no "Unknown" values
-            document = validation_service._ensure_safe_metadata(document)
+                self.logger.debug(
+                    "Document retrieved", org_id=org_id, document_id=document_id
+                )
 
-            self.logger.debug(
-                "Document retrieved", org_id=org_id, document_id=document_id
-            )
-
-            return DocumentResponse.model_validate(document)
+                return DocumentResponse.model_validate(document)
 
         except DocumentNotFoundError:
             raise
@@ -493,6 +354,10 @@ class DocumentCrudService(DocumentBaseService):
         document_id: str,
         new_status: DocumentStatus,
         metadata: Optional[Dict[str, Any]] = None,
+        updated_by_user_id: Optional[str] = None,
+        ip_address: Optional[str] = None,
+        session_id: Optional[str] = None,
+        user_agent: Optional[str] = None,
     ) -> DocumentResponse:
         """
         Update document status with optional metadata.
@@ -502,6 +367,10 @@ class DocumentCrudService(DocumentBaseService):
             document_id: Document ID
             new_status: New document status
             metadata: Additional metadata updates
+            updated_by_user_id: ID of user who updated the document (for audit)
+            ip_address: Client IP address (for audit)
+            session_id: Session ID (for audit)
+            user_agent: Client user agent (for audit)
 
         Returns:
             Updated document response
@@ -510,53 +379,63 @@ class DocumentCrudService(DocumentBaseService):
             DocumentNotFoundError: If document not found
         """
         try:
-            doc_ref = self._get_collection(org_id).document(document_id)
-            doc = await doc_ref.get()
+            async with self.db.session() as session:
+                stmt = select(DocumentModel).where(
+                    DocumentModel.id == document_id,
+                    DocumentModel.organization_id == org_id,
+                    DocumentModel.is_active == True
+                )
+                result = await session.execute(stmt)
+                doc_model = result.scalar_one_or_none()
 
-            if not doc.exists:
-                raise DocumentNotFoundError(f"Document with ID {document_id} not found")
+                if not doc_model:
+                    raise DocumentNotFoundError(
+                        f"Document with ID {document_id} not found"
+                    )
 
-            document_data = doc.to_dict()
-            document = Document.from_dict(document_data, doc.id)
+                old_status = doc_model.status
+                status_value = new_status.value if hasattr(new_status, 'value') else new_status
+                doc_model.status = status_value
+                doc_model.updated_at = datetime.now(timezone.utc)
 
-            if not document.is_active:
-                raise DocumentNotFoundError(f"Document with ID {document_id} not found")
+                if metadata:
+                    current_metadata = doc_model.doc_metadata or {}
+                    current_metadata.update(metadata)
+                    doc_model.doc_metadata = current_metadata
 
-            # Prepare update data
-            update_data = {
-                "status": (
-                    new_status.value if hasattr(new_status, "value") else new_status
-                ),
-                "updated_at": datetime.utcnow(),
-            }
+                await session.flush()
 
-            # Add metadata updates if provided
-            if metadata:
-                current_metadata = document.metadata or {}
-                current_metadata.update(metadata)
-                update_data["metadata"] = current_metadata
+                document = self._model_to_pydantic(doc_model)
 
-            # Update document in Firestore
-            await doc_ref.update(update_data)
+                self.logger.info(
+                    "Document status updated",
+                    org_id=org_id,
+                    document_id=document_id,
+                    old_status=old_status,
+                    new_status=status_value,
+                )
 
-            # Update local document object
-            document.status = new_status
-            document.updated_at = update_data["updated_at"]
-            if metadata:
-                document.metadata = update_data["metadata"]
+                # Audit logging (non-blocking)
+                asyncio.create_task(
+                    audit_service.log_event(
+                        org_id=org_id,
+                        action=AuditAction.UPDATE,
+                        entity_type=AuditEntityType.DOCUMENT,
+                        entity_id=document_id,
+                        user_id=updated_by_user_id,
+                        details={
+                            "old_status": old_status,
+                            "new_status": status_value,
+                            "metadata_updated": metadata is not None,
+                            "operation": "update",
+                        },
+                        ip_address=ip_address,
+                        session_id=session_id,
+                        user_agent=user_agent,
+                    )
+                )
 
-            self.logger.info(
-                "Document status updated",
-                org_id=org_id,
-                document_id=document_id,
-                old_status=document_data.get("status"),
-                new_status=(
-                    new_status.value if hasattr(new_status, "value") else new_status
-                ),
-                has_metadata_updates=bool(metadata),
-            )
-
-            return DocumentResponse.model_validate(document)
+                return DocumentResponse.model_validate(document)
 
         except DocumentNotFoundError:
             raise
@@ -565,60 +444,94 @@ class DocumentCrudService(DocumentBaseService):
                 "Error updating document status",
                 org_id=org_id,
                 document_id=document_id,
-                new_status=(
-                    new_status.value if hasattr(new_status, "value") else new_status
-                ),
                 error=str(e),
             )
             raise DocumentUploadError(f"Failed to update document status: {e}")
 
-    async def delete_document(self, org_id: str, document_id: str) -> Dict[str, Any]:
+    async def delete_document(
+        self,
+        org_id: str,
+        document_id: str,
+        deleted_by_user_id: Optional[str] = None,
+        ip_address: Optional[str] = None,
+        session_id: Optional[str] = None,
+        user_agent: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """
         Soft delete document with cleanup operations.
 
         Args:
             org_id: Organization ID
             document_id: Document ID
+            deleted_by_user_id: ID of user who deleted the document (for audit)
+            ip_address: Client IP address (for audit)
+            session_id: Session ID (for audit)
+            user_agent: Client user agent (for audit)
 
         Returns:
             Deletion result with cleanup status
         """
         try:
-            doc_ref = self._get_collection(org_id).document(document_id)
-            doc = await doc_ref.get()
+            async with self.db.session() as session:
+                stmt = select(DocumentModel).where(
+                    DocumentModel.id == document_id,
+                    DocumentModel.organization_id == org_id,
+                    DocumentModel.is_active == True
+                )
+                result = await session.execute(stmt)
+                doc_model = result.scalar_one_or_none()
 
-            if not doc.exists:
-                raise DocumentNotFoundError(f"Document with ID {document_id} not found")
+                if not doc_model:
+                    raise DocumentNotFoundError(
+                        f"Document with ID {document_id} not found"
+                    )
 
-            document_data = doc.to_dict()
-            document = Document.from_dict(document_data, doc.id)
+                filename = doc_model.filename
+                storage_path = doc_model.storage_path
 
-            if not document.is_active:
-                raise DocumentNotFoundError(f"Document with ID {document_id} not found")
+                # Soft delete
+                deleted_status = DocumentStatus.DELETED.value if hasattr(DocumentStatus.DELETED, 'value') else DocumentStatus.DELETED
+                doc_model.is_active = False
+                doc_model.status = deleted_status
+                doc_model.updated_at = datetime.now(timezone.utc)
 
-            # Soft delete: Mark as inactive
-            update_data = {
-                "is_active": False,
-                "status": DocumentStatus.DELETED.value,
-                "updated_at": datetime.utcnow(),
-            }
+                await session.flush()
 
-            await doc_ref.update(update_data)
+                self.logger.info(
+                    "Document soft deleted",
+                    org_id=org_id,
+                    document_id=document_id,
+                    filename=filename,
+                    storage_path=storage_path,
+                )
 
-            self.logger.info(
-                "Document soft deleted",
-                org_id=org_id,
-                document_id=document_id,
-                filename=document.filename,
-                storage_path=document.storage_path,
-            )
+                # Audit logging (non-blocking)
+                asyncio.create_task(
+                    audit_service.log_event(
+                        org_id=org_id,
+                        action=AuditAction.DELETE,
+                        entity_type=AuditEntityType.DOCUMENT,
+                        entity_id=document_id,
+                        user_id=deleted_by_user_id,
+                        details={
+                            "deleted_values": {
+                                "filename": filename,
+                                "storage_path": storage_path,
+                            },
+                            "operation": "delete",
+                        },
+                        ip_address=ip_address,
+                        session_id=session_id,
+                        user_agent=user_agent,
+                    )
+                )
 
-            return {
-                "success": True,
-                "message": "Document deleted successfully",
-                "document_id": document_id,
-                "cleanup_performed": "soft_delete_only",
-            }
+                return {
+                    "success": True,
+                    "message": "Document deleted successfully",
+                    "document_id": document_id,
+                    "cleanup_performed": "soft_delete_only",
+                }
 
         except DocumentNotFoundError:
             raise

@@ -1,0 +1,51 @@
+# Git
+.git
+.gitignore
+
+# Python
+.venv
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info
+.eggs
+dist
+build
+
+# Testing
+.pytest_cache
+.coverage
+htmlcov
+.tox
+
+# IDE
+.idea
+.vscode
+*.swp
+*.swo
+
+# Environment files (secrets)
+.env
+.env.*
+!.env.example
+
+# Documentation
+*.md
+!README.md
+
+# Tests (not needed in production image)
+tests/
+
+# Development files
+*.log
+*.tmp
+.DS_Store
+
+# Cloud Build artifacts
+cloudbuild.yaml
+deploy.sh
+
+# Local development
+run_dev.sh

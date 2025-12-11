@@ -2,7 +2,7 @@ import re
 import secrets
 import string
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, Any, Set, Tuple
 from enum import Enum
 from dataclasses import dataclass, field
@@ -44,8 +44,8 @@ class UserSessionManager:
     org_id: str
     active_tokens: Set[str] = field(default_factory=set)
     blacklisted_tokens: Set[str] = field(default_factory=set)
-    created_at: datetime = field(default_factory=datetime.utcnow)
-    last_activity: datetime = field(default_factory=datetime.utcnow)
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    last_activity: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 # Enterprise-grade token management (Thread-safe)
@@ -64,14 +64,19 @@ class EnterpriseTokenManager:
         self._start_cleanup_task()
 
     def _start_cleanup_task(self):
-        """Start background task for token cleanup."""
+        """Start background task for token cleanup (deferred until async context)."""
+        # Cleanup task is now started lazily when first needed
+        # This avoids the deprecated asyncio.get_event_loop() warning
+        pass
+
+    async def _ensure_cleanup_task(self):
+        """Ensure cleanup task is running (called from async context)."""
         if not self._cleanup_task:
             try:
-                loop = asyncio.get_event_loop()
-                self._cleanup_task = loop.create_task(self._periodic_cleanup())
+                self._cleanup_task = asyncio.create_task(self._periodic_cleanup())
             except RuntimeError:
-                # No event loop running yet - will be started later
-                pass
+                # No event loop in current thread
+                logger.debug("Cleanup task will start when event loop is ready")
 
     async def _periodic_cleanup(self):
         """Periodic cleanup of expired tokens and blacklist entries."""
@@ -99,7 +104,7 @@ class EnterpriseTokenManager:
 
                 session = self._user_sessions[user_key]
                 session.active_tokens.add(token_info.token_id)
-                session.last_activity = datetime.utcnow()
+                session.last_activity = datetime.now(timezone.utc)
 
                 # Handle refresh token families
                 if token_info.refresh_token_family_id:
@@ -215,7 +220,7 @@ class EnterpriseTokenManager:
         """Clean up expired tokens and blacklist entries."""
         with self._lock:
             try:
-                now = datetime.utcnow()
+                now = datetime.now(timezone.utc)
                 cleaned_tokens = 0
                 cleaned_blacklist = 0
 
@@ -354,8 +359,16 @@ def validate_password_strength(password: str) -> tuple[bool, str]:
             'Password must contain at least one special character (!@#$%^&*(),.?":{}|<>)',
         )
 
-    # Check for common patterns
-    if password.lower() in ["password", "12345678", "qwerty123", "password123"]:
+    # Check for common patterns - expanded list based on OWASP guidelines
+    common_passwords = {
+        "password", "12345678", "qwerty123", "password123", "admin123",
+        "letmein1", "welcome1", "monkey12", "dragon12", "master12",
+        "abc12345", "trustno1", "iloveyou", "sunshine", "princess",
+        "football", "baseball", "superman", "michael1", "shadow12",
+        "passw0rd", "p@ssword", "p@ssw0rd", "password1", "qwertyui",
+        "asdfghjk", "zxcvbnm1", "123456ab", "abcd1234", "1234abcd",
+    }
+    if password.lower() in common_passwords:
         return False, "Password is too common"
 
     return True, ""
@@ -434,7 +447,7 @@ def create_access_token(
         Tuple of (encoded JWT token, token info)
     """
     to_encode = data.copy()
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
 
     # Use configuration-based expiration
     if expires_delta:
@@ -506,7 +519,7 @@ def create_refresh_token(
     Returns:
         Tuple of (encoded JWT refresh token, token info)
     """
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     expire = now + timedelta(days=settings.refresh_token_expire_days)
 
     # Generate unique token ID and family ID if not provided
@@ -579,7 +592,7 @@ def verify_token(token: str) -> Optional[Dict[str, Any]]:
             with _enterprise_token_manager._lock:
                 if token_id in _enterprise_token_manager._token_registry:
                     _enterprise_token_manager._token_registry[token_id].last_used = (
-                        datetime.utcnow()
+                        datetime.now(timezone.utc)
                     )
 
         if settings.ENABLE_AUTH_AUDIT_LOGGING:
@@ -626,11 +639,12 @@ def blacklist_token(token: str, reason: str = "logout") -> bool:
     """
     try:
         # Decode token to get token ID
+        # Allow expired tokens but still verify signature for security
         payload = jwt.decode(
             token,
             settings.JWT_SECRET_KEY,
             algorithms=[settings.JWT_ALGORITHM],
-            verify=False,
+            options={"verify_exp": False},
         )
         token_id = payload.get("jti")
 
@@ -659,11 +673,12 @@ def is_token_blacklisted(token: str) -> bool:
     """
     try:
         # Try to decode token to get token ID
+        # Allow expired tokens but still verify signature for security
         payload = jwt.decode(
             token,
             settings.JWT_SECRET_KEY,
             algorithms=[settings.JWT_ALGORITHM],
-            verify=False,
+            options={"verify_exp": False},
         )
         token_id = payload.get("jti")
 
@@ -691,7 +706,7 @@ def verify_token_detailed(
         Tuple of (decoded token data or None, validation result)
     """
     try:
-        payload = jwt.decode(token, settings.JWT_SECRET_KEY, algorithms=["HS256"])
+        payload = jwt.decode(token, settings.JWT_SECRET_KEY, algorithms=[settings.JWT_ALGORITHM])
         logger.debug(
             "Token verified successfully",
             user_id=payload.get("sub"),
@@ -773,10 +788,10 @@ def generate_invitation_token(
         Encoded invitation token
     """
     data = {"org_id": org_id, "email": email, "role": role, "type": "invitation"}
-    expire = datetime.utcnow() + timedelta(hours=expires_hours)
-    data.update({"exp": expire, "iat": datetime.utcnow()})
+    expire = datetime.now(timezone.utc) + timedelta(hours=expires_hours)
+    data.update({"exp": expire, "iat": datetime.now(timezone.utc)})
 
-    encoded_jwt = jwt.encode(data, settings.JWT_SECRET_KEY, algorithm="HS256")
+    encoded_jwt = jwt.encode(data, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
     return encoded_jwt
 
 
@@ -791,7 +806,7 @@ def verify_invitation_token(token: str) -> Optional[Dict[str, Any]]:
         Token data or None if invalid/expired
     """
     try:
-        payload = jwt.decode(token, settings.JWT_SECRET_KEY, algorithms=["HS256"])
+        payload = jwt.decode(token, settings.JWT_SECRET_KEY, algorithms=[settings.JWT_ALGORITHM])
         if payload.get("type") != "invitation":
             logger.debug("Token verification failed: not an invitation token")
             return None
@@ -896,7 +911,7 @@ def get_current_user_org(
 
     if settings.ENABLE_AUTH_AUDIT_LOGGING:
         logger.info(
-            "🔐 ENTERPRISE AUTHENTICATION STARTED",
+            "Enterprise authentication started",
             token_present=bool(credentials.credentials),
             token_length=len(credentials.credentials) if credentials.credentials else 0,
         )
@@ -907,7 +922,7 @@ def get_current_user_org(
     payload = verify_token_not_blacklisted(token)
     if not payload:
         if settings.ENABLE_AUTH_AUDIT_LOGGING:
-            logger.warning("🚫 AUTHENTICATION FAILED: Invalid or expired token")
+            logger.warning("Authentication failed: Invalid or expired token")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired token"
         )
@@ -917,7 +932,7 @@ def get_current_user_org(
     if token_type != "access":
         if settings.ENABLE_AUTH_AUDIT_LOGGING:
             logger.warning(
-                "🚫 AUTHENTICATION FAILED: Invalid token type", provided_type=token_type
+                "Authentication failed: Invalid token type", provided_type=token_type
             )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token type"
@@ -932,7 +947,7 @@ def get_current_user_org(
 
     if not all([user_id, org_id, email, role]):
         logger.error(
-            "🚫 AUTHENTICATION FAILED: Invalid token payload",
+            "Authentication failed: Invalid token payload",
             user_id=bool(user_id),
             org_id=bool(org_id),
             email=bool(email),
@@ -945,7 +960,7 @@ def get_current_user_org(
 
     if settings.ENABLE_AUTH_AUDIT_LOGGING:
         logger.info(
-            "✅ ENTERPRISE AUTHENTICATION SUCCESS",
+            "Enterprise authentication success",
             org_id=org_id,
             user_id=user_id,
             token_id=token_id[:8] + "..." if token_id else "legacy",

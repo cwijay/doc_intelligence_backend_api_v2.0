@@ -1,17 +1,15 @@
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, Any, Optional, List
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_validator
 
 
 class Folder(BaseModel):
-    """Folder Firestore model for hierarchical document organization."""
+    """Folder model for hierarchical document organization."""
 
-    # Primary key - Firestore document ID (managed by Firestore)
-    id: Optional[str] = Field(
-        None, description="Unique folder identifier (Firestore document ID)"
-    )
+    # Primary key
+    id: Optional[str] = Field(None, description="Unique folder identifier")
 
     # Multi-tenancy
     org_id: str = Field(..., description="Organization ID (foreign key)")
@@ -35,18 +33,20 @@ class Folder(BaseModel):
 
     # Timestamps
     created_at: datetime = Field(
-        default_factory=datetime.utcnow, description="When folder was created"
+        default_factory=lambda: datetime.now(timezone.utc),
+        description="When folder was created",
     )
     updated_at: datetime = Field(
-        default_factory=datetime.utcnow, description="When folder was last updated"
+        default_factory=lambda: datetime.now(timezone.utc),
+        description="When folder was last updated",
     )
 
-    class Config:
-        """Pydantic configuration."""
+    model_config = ConfigDict()
 
-        json_encoders = {
-            datetime: lambda dt: dt.isoformat(),
-        }
+    @field_serializer("created_at", "updated_at")
+    def serialize_datetime(self, value: datetime) -> str:
+        """Serialize datetime fields to ISO format."""
+        return value.isoformat() if value else None
 
     @field_validator("name")
     @classmethod
@@ -95,9 +95,9 @@ class Folder(BaseModel):
         return f"<Folder(id={self.id}, name='{self.name}', org_id='{self.org_id}', path='{self.path}')>"
 
     def to_dict(self) -> Dict[str, Any]:
-        """Convert folder to dictionary for Firestore."""
+        """Convert folder to dictionary for database storage."""
         data = self.model_dump(exclude={"id"})
-        # Convert datetime objects to ISO format for Firestore
+        # Convert datetime objects to ISO format
         if "created_at" in data:
             data["created_at"] = self.created_at.isoformat()
         if "updated_at" in data:
@@ -106,7 +106,7 @@ class Folder(BaseModel):
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any], doc_id: Optional[str] = None) -> "Folder":
-        """Create Folder from Firestore document data."""
+        """Create Folder from database record."""
         # Handle datetime parsing
         if "created_at" in data and isinstance(data["created_at"], str):
             data["created_at"] = datetime.fromisoformat(data["created_at"])
@@ -144,7 +144,7 @@ class Folder(BaseModel):
 
     def update_timestamp(self):
         """Update the updated_at timestamp."""
-        self.updated_at = datetime.utcnow()
+        self.updated_at = datetime.now(timezone.utc)
 
     def calculate_path(self, parent_path: Optional[str] = None) -> str:
         """

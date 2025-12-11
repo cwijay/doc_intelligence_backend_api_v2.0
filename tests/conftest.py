@@ -1,463 +1,489 @@
 """
-Pytest Configuration and Shared Fixtures
+Pytest configuration and fixtures for the test suite.
 
-Provides shared fixtures for all API tests including HTTP client,
-authentication, and resource cleanup.
+This module provides shared fixtures for unit and integration tests.
 """
 
+import os
 import asyncio
-import io
-from typing import Dict, List, Optional, AsyncGenerator
+import uuid
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Dict, Any, AsyncGenerator, Generator, List
+from unittest.mock import Mock, MagicMock, AsyncMock, patch
+
 import pytest
-import httpx
-from dotenv import load_dotenv
+import pytest_asyncio
+from faker import Faker
+from httpx import AsyncClient, ASGITransport
 
-# Load test environment variables before test_config initializes
-# This ensures TEST_BASE_URL is available when TestConfig reads os.getenv()
-test_env_file = Path(__file__).parent.parent / ".env.test"
-if test_env_file.exists():
-    load_dotenv(test_env_file)
+# Set test environment before importing app modules
+os.environ.setdefault("ENVIRONMENT", "test")
+os.environ.setdefault("JWT_SECRET_KEY", "test-secret-key-for-testing-purposes-only-32chars")
+os.environ.setdefault("DATABASE_URL", "sqlite+aiosqlite:///:memory:")
+os.environ.setdefault("USE_CLOUD_SQL_CONNECTOR", "false")
+os.environ.setdefault("GCS_BUCKET_NAME", "test-bucket")
+os.environ.setdefault("GCP_PROJECT_ID", "test-project")
 
-from test_config import config, data_factory, TestCredentials
+fake = Faker()
 
 
-# ============================================================================
+# =============================================================================
 # Pytest Configuration
-# ============================================================================
+# =============================================================================
 
 def pytest_configure(config):
-    """Configure pytest with custom markers."""
-    config.addinivalue_line("markers", "slow: marks tests as slow (deselect with '-m \"not slow\"')")
-    config.addinivalue_line("markers", "ai: marks tests that use AI services (costs money)")
-    config.addinivalue_line("markers", "integration: marks tests as integration tests")
-    config.addinivalue_line("markers", "auth: marks authentication-related tests")
-    config.addinivalue_line("markers", "document: marks document-related tests")
+    """Configure pytest markers."""
+    config.addinivalue_line("markers", "unit: Unit tests")
+    config.addinivalue_line("markers", "integration: Integration tests (API)")
+    config.addinivalue_line("markers", "slow: Slow running tests")
+    config.addinivalue_line("markers", "auth: Authentication tests")
+    config.addinivalue_line("markers", "db: Database tests")
+    config.addinivalue_line("markers", "api: API endpoint tests")
 
 
-# ============================================================================
-# HTTP Client Fixtures
-# ============================================================================
-
-@pytest.fixture
-async def http_client() -> AsyncGenerator[httpx.AsyncClient, None]:
-    """
-    Provide async HTTP client for API requests.
-
-    Yields:
-        httpx.AsyncClient configured with base URL and timeout
-
-    Example:
-        async def test_endpoint(http_client):
-            response = await http_client.get("/health")
-            assert response.status_code == 200
-    """
-    async with httpx.AsyncClient(
-        base_url=config.base_url,
-        timeout=config.default_timeout
-    ) as client:
-        yield client
-
-
-@pytest.fixture
-async def ai_http_client() -> AsyncGenerator[httpx.AsyncClient, None]:
-    """
-    Provide async HTTP client with extended timeout for AI operations.
-
-    Yields:
-        httpx.AsyncClient with longer timeout for AI endpoints
-
-    Example:
-        async def test_ai_summary(ai_http_client):
-            response = await ai_http_client.post("/documents/summarize", ...)
-    """
-    async with httpx.AsyncClient(
-        base_url=config.base_url,
-        timeout=config.ai_operation_timeout
-    ) as client:
-        yield client
-
-
-# ============================================================================
-# Resource Cleanup Tracking
-# ============================================================================
-
-class ResourceTracker:
-    """Track created resources for cleanup after tests."""
-
-    def __init__(self):
-        self.organizations: List[str] = []
-        self.users: List[Dict[str, str]] = []  # [{"org_id": "...", "user_id": "..."}]
-        self.documents: List[Dict[str, str]] = []  # [{"org_id": "...", "doc_id": "..."}]
-        self.folders: List[Dict[str, str]] = []  # [{"org_id": "...", "folder_id": "..."}]
-
-    def add_organization(self, org_id: str):
-        """Track created organization."""
-        if org_id and org_id not in self.organizations:
-            self.organizations.append(org_id)
-
-    def add_user(self, org_id: str, user_id: str):
-        """Track created user."""
-        if org_id and user_id:
-            self.users.append({"org_id": org_id, "user_id": user_id})
-
-    def add_document(self, org_id: str, doc_id: str):
-        """Track created document."""
-        if org_id and doc_id:
-            self.documents.append({"org_id": org_id, "doc_id": doc_id})
-
-    def add_folder(self, org_id: str, folder_id: str):
-        """Track created folder."""
-        if org_id and folder_id:
-            self.folders.append({"org_id": org_id, "folder_id": folder_id})
-
-    async def cleanup_all(self, client: httpx.AsyncClient, headers: Optional[Dict] = None):
-        """
-        Cleanup all tracked resources in reverse order.
-
-        Args:
-            client: HTTP client for making cleanup requests
-            headers: Optional auth headers for cleanup operations
-        """
-        # Cleanup documents first
-        for doc in reversed(self.documents):
-            try:
-                await client.delete(
-                    f"{config.api_prefix}/documents/{doc['doc_id']}",
-                    headers=headers
-                )
-            except Exception as e:
-                print(f"Failed to cleanup document {doc['doc_id']}: {e}")
-
-        # Cleanup folders
-        for folder in reversed(self.folders):
-            try:
-                await client.delete(
-                    f"{config.api_prefix}/organizations/{folder['org_id']}/folders/{folder['folder_id']}",
-                    headers=headers
-                )
-            except Exception as e:
-                print(f"Failed to cleanup folder {folder['folder_id']}: {e}")
-
-        # Cleanup users
-        for user in reversed(self.users):
-            try:
-                await client.delete(
-                    f"{config.api_prefix}/organizations/{user['org_id']}/users/{user['user_id']}",
-                    headers=headers
-                )
-            except Exception as e:
-                print(f"Failed to cleanup user {user['user_id']}: {e}")
-
-        # Cleanup organizations last
-        for org_id in reversed(self.organizations):
-            try:
-                await client.delete(
-                    f"{config.api_prefix}/organizations/{org_id}",
-                    headers=headers
-                )
-            except Exception as e:
-                print(f"Failed to cleanup organization {org_id}: {e}")
-
-
-@pytest.fixture
-async def resource_tracker(http_client) -> AsyncGenerator[ResourceTracker, None]:
-    """
-    Provide resource tracker with automatic cleanup.
-
-    Yields:
-        ResourceTracker instance
-
-    The tracker will automatically cleanup all tracked resources after the test.
-
-    Example:
-        async def test_create_org(http_client, resource_tracker):
-            response = await http_client.post("/organizations", json={...})
-            org_id = response.json()["id"]
-            resource_tracker.add_organization(org_id)
-            # Org will be auto-cleaned up after test
-    """
-    tracker = ResourceTracker()
-    yield tracker
-
-    # Cleanup after test (even if test failed, unless configured otherwise)
-    try:
-        await tracker.cleanup_all(http_client)
-    except Exception as e:
-        print(f"Error during resource cleanup: {e}")
-
-
-# ============================================================================
-# Authentication Fixtures
-# ============================================================================
-
-@pytest.fixture
-async def test_org_and_user(http_client, resource_tracker) -> AsyncGenerator[Dict, None]:
-    """
-    Create test organization and user, then clean up.
-
-    Yields:
-        Dict with:
-            - org_id: Organization ID
-            - org_name: Organization name
-            - user_id: User ID
-            - email: User email
-            - password: User password
-            - credentials: TestCredentials object
-
-    Example:
-        async def test_something(http_client, test_org_and_user):
-            org_id = test_org_and_user["org_id"]
-            headers = test_org_and_user["credentials"].auth_headers
-    """
-    # Generate unique test data
-    org_data = data_factory.generate_org_data()
-    user_data = data_factory.generate_user_data()
-
-    # Create organization
-    org_response = await http_client.post(
-        f"{config.api_prefix}/organizations",
-        json=org_data
-    )
-    assert org_response.status_code == 201, f"Failed to create org: {org_response.text}"
-    org_result = org_response.json()
-    org_id = org_result["id"]
-    resource_tracker.add_organization(org_id)
-
-    # Register user
-    register_data = {
-        **user_data,
-        "org_id": org_id
-    }
-    register_response = await http_client.post(
-        f"{config.api_prefix}/auth/register",
-        json=register_data
-    )
-    assert register_response.status_code == 200, f"Failed to register user: {register_response.text}"
-
-    # Login user
-    login_response = await http_client.post(
-        f"{config.api_prefix}/auth/login",
-        json={
-            "email": user_data["email"],
-            "password": user_data["password"]
-        }
-    )
-    assert login_response.status_code == 200, f"Failed to login: {login_response.text}"
-    login_result = login_response.json()
-
-    # Create credentials object
-    credentials = TestCredentials(
-        email=user_data["email"],
-        password=user_data["password"]
-    )
-    credentials.update_from_login_response(login_result)
-    resource_tracker.add_user(org_id, credentials.user_id)
-
-    yield {
-        "org_id": org_id,
-        "org_name": org_data["name"],
-        "user_id": credentials.user_id,
-        "email": credentials.email,
-        "password": credentials.password,
-        "username": credentials.username,
-        "credentials": credentials
-    }
-
-    # Cleanup will happen via resource_tracker
-
-
-@pytest.fixture
-async def authenticated_client(http_client, test_org_and_user) -> AsyncGenerator[tuple, None]:
-    """
-    Provide authenticated HTTP client with test user credentials.
-
-    Yields:
-        Tuple of (client, test_data) where:
-            - client: httpx.AsyncClient (same as http_client)
-            - test_data: Dict with org_id, user_id, credentials, etc.
-
-    Example:
-        async def test_protected_endpoint(authenticated_client):
-            client, test_data = authenticated_client
-            headers = test_data["credentials"].auth_headers
-            response = await client.get("/documents/", headers=headers)
-    """
-    yield http_client, test_org_and_user
-
-
-# ============================================================================
-# Test File Fixtures
-# ============================================================================
-
-@pytest.fixture
-def sample_pdf_file() -> io.BytesIO:
-    """
-    Provide sample PDF file for upload tests.
-
-    Returns:
-        io.BytesIO with minimal PDF content
-
-    Example:
-        def test_upload(sample_pdf_file):
-            files = {"file": ("test.pdf", sample_pdf_file, "application/pdf")}
-    """
-    # Minimal valid PDF content
-    pdf_content = b"""%PDF-1.4
-1 0 obj
-<<
-/Type /Catalog
-/Pages 2 0 R
->>
-endobj
-2 0 obj
-<<
-/Type /Pages
-/Kids [3 0 R]
-/Count 1
->>
-endobj
-3 0 obj
-<<
-/Type /Page
-/Parent 2 0 R
-/Resources <<
-/Font <<
-/F1 <<
-/Type /Font
-/Subtype /Type1
-/BaseFont /Helvetica
->>
->>
->>
-/MediaBox [0 0 612 792]
-/Contents 4 0 R
->>
-endobj
-4 0 obj
-<<
-/Length 44
->>
-stream
-BT
-/F1 12 Tf
-100 700 Td
-(Test PDF Document) Tj
-ET
-endstream
-endobj
-xref
-0 5
-0000000000 65535 f
-0000000009 00000 n
-0000000058 00000 n
-0000000115 00000 n
-0000000317 00000 n
-trailer
-<<
-/Size 5
-/Root 1 0 R
->>
-startxref
-410
-%%EOF
-"""
-    return io.BytesIO(pdf_content)
-
-
-@pytest.fixture
-def sample_txt_file() -> io.BytesIO:
-    """
-    Provide sample text file for upload tests.
-
-    Returns:
-        io.BytesIO with text content
-
-    Example:
-        def test_upload(sample_txt_file):
-            files = {"file": ("test.txt", sample_txt_file, "text/plain")}
-    """
-    content = b"""Test Document Content
-
-This is a test document for API testing.
-It contains multiple lines of text.
-
-Key points:
-- Point 1
-- Point 2
-- Point 3
-
-End of document.
-"""
-    return io.BytesIO(content)
-
-
-@pytest.fixture
-def sample_docx_file() -> io.BytesIO:
-    """
-    Provide sample DOCX file for upload tests.
-
-    Note: This is a minimal DOCX structure. For comprehensive DOCX testing,
-    consider using python-docx library to generate proper documents.
-
-    Returns:
-        io.BytesIO with minimal DOCX content
-    """
-    # For simplicity, return a text file labeled as DOCX
-    # In production tests, you'd want to use python-docx to create real DOCX files
-    content = b"""PK\x03\x04Test DOCX Content"""
-    return io.BytesIO(content)
-
-
-# ============================================================================
+# =============================================================================
 # Event Loop Configuration
-# ============================================================================
+# =============================================================================
 
 @pytest.fixture(scope="session")
 def event_loop():
-    """
-    Create event loop for async tests.
-
-    This ensures all async tests share the same event loop.
-    """
+    """Create an event loop for the test session."""
     loop = asyncio.get_event_loop_policy().new_event_loop()
     yield loop
     loop.close()
 
 
-# ============================================================================
-# Test Data Fixtures
-# ============================================================================
+# =============================================================================
+# Test Data Generators
+# =============================================================================
 
 @pytest.fixture
-def unique_org_data() -> Dict:
-    """Generate unique organization data for each test."""
-    return data_factory.generate_org_data()
-
-
-@pytest.fixture
-def unique_user_data() -> Dict:
-    """Generate unique user data for each test."""
-    return data_factory.generate_user_data()
-
-
-@pytest.fixture
-def unique_folder_data() -> Dict:
-    """Generate unique folder data for each test."""
-    return data_factory.generate_folder_data()
-
-
-# ============================================================================
-# Configuration Fixtures
-# ============================================================================
-
-@pytest.fixture
-def test_config():
-    """Provide test configuration."""
-    return config
+def user_data() -> Dict[str, Any]:
+    """Generate random user data for testing."""
+    return {
+        "id": str(uuid.uuid4()),
+        "email": fake.email(),
+        "username": fake.user_name()[:50],
+        "full_name": fake.name(),
+        "password": "SecurePass123!",
+        "role": "user",
+        "is_active": True,
+        "org_id": str(uuid.uuid4()),
+    }
 
 
 @pytest.fixture
-def test_data_factory():
-    """Provide test data factory."""
-    return data_factory
+def org_data() -> Dict[str, Any]:
+    """Generate random organization data for testing."""
+    return {
+        "id": str(uuid.uuid4()),
+        "name": fake.company()[:100],
+        "plan_type": "free",
+        "domain": fake.domain_name(),
+        "settings": {},
+        "is_active": True,
+    }
+
+
+@pytest.fixture
+def document_data() -> Dict[str, Any]:
+    """Generate random document data for testing."""
+    return {
+        "id": str(uuid.uuid4()),
+        "name": fake.file_name(extension="pdf"),
+        "original_filename": fake.file_name(extension="pdf"),
+        "file_type": "pdf",
+        "file_size": fake.random_int(min=1024, max=10485760),
+        "storage_path": f"orgs/{uuid.uuid4()}/documents/{uuid.uuid4()}.pdf",
+        "status": "uploaded",
+        "org_id": str(uuid.uuid4()),
+        "user_id": str(uuid.uuid4()),
+    }
+
+
+@pytest.fixture
+def folder_data() -> Dict[str, Any]:
+    """Generate random folder data for testing."""
+    return {
+        "id": str(uuid.uuid4()),
+        "name": fake.word(),
+        "path": f"/{fake.word()}",
+        "org_id": str(uuid.uuid4()),
+        "parent_id": None,
+    }
+
+
+# =============================================================================
+# Authentication Fixtures
+# =============================================================================
+
+@pytest.fixture
+def mock_jwt_secret():
+    """Provide a consistent JWT secret for testing."""
+    return "test-secret-key-for-testing-purposes-only-32chars"
+
+
+@pytest.fixture
+def valid_token_payload(user_data: Dict[str, Any], org_data: Dict[str, Any]) -> Dict[str, Any]:
+    """Generate a valid JWT token payload."""
+    now = datetime.now(timezone.utc)
+    return {
+        "sub": user_data["id"],
+        "org_id": org_data["id"],
+        "email": user_data["email"],
+        "role": user_data["role"],
+        "token_type": "access",
+        "jti": str(uuid.uuid4()),
+        "iat": now,
+        "exp": now + timedelta(hours=2),
+    }
+
+
+@pytest.fixture
+def expired_token_payload(valid_token_payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Generate an expired JWT token payload."""
+    payload = valid_token_payload.copy()
+    payload["exp"] = datetime.now(timezone.utc) - timedelta(hours=1)
+    return payload
+
+
+@pytest.fixture
+def mock_current_user(user_data: Dict[str, Any], org_data: Dict[str, Any]) -> Dict[str, Any]:
+    """Mock current user data as returned by get_current_user_org."""
+    return {
+        "user_id": user_data["id"],
+        "org_id": org_data["id"],
+        "email": user_data["email"],
+        "role": user_data["role"],
+        "token_id": str(uuid.uuid4()),
+        "issued_at": datetime.now(timezone.utc).timestamp(),
+        "expires_at": (datetime.now(timezone.utc) + timedelta(hours=2)).timestamp(),
+    }
+
+
+# =============================================================================
+# Mock Objects
+# =============================================================================
+
+@pytest.fixture
+def mock_db_session():
+    """Create a mock database session."""
+    session = AsyncMock()
+    session.execute = AsyncMock()
+    session.commit = AsyncMock()
+    session.rollback = AsyncMock()
+    session.close = AsyncMock()
+    session.flush = AsyncMock()
+    session.add = Mock()
+    session.delete = Mock()
+    return session
+
+
+@pytest.fixture
+def mock_gcs_client():
+    """Create a mock GCS client."""
+    client = Mock()
+    client.bucket = Mock()
+    client.upload_blob = AsyncMock()
+    client.download_blob = AsyncMock()
+    client.delete_blob = AsyncMock()
+    client.generate_signed_url = Mock(return_value="https://storage.googleapis.com/test-signed-url")
+    client.blob_exists = AsyncMock(return_value=True)
+    return client
+
+
+@pytest.fixture
+def mock_upload_file():
+    """Create a mock UploadFile object."""
+    file = Mock()
+    file.filename = "test_document.pdf"
+    file.content_type = "application/pdf"
+    file.size = 1024 * 100  # 100KB
+    file.file = Mock()
+    file.read = AsyncMock(return_value=b"test file content")
+    file.seek = AsyncMock()
+    return file
+
+
+# =============================================================================
+# Application Fixtures
+# =============================================================================
+
+@pytest.fixture
+def app():
+    """Create a test FastAPI application instance."""
+    # Import here to ensure test environment is set
+    from app.main import app as fastapi_app
+    return fastapi_app
+
+
+@pytest_asyncio.fixture
+async def async_client(app) -> AsyncGenerator[AsyncClient, None]:
+    """Create an async HTTP client for API testing."""
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test"
+    ) as client:
+        yield client
+
+
+# =============================================================================
+# Database Fixtures (for integration tests)
+# =============================================================================
+
+@pytest.fixture
+def mock_database_manager():
+    """Create a mock DatabaseManager."""
+    manager = Mock()
+    manager.session = MagicMock()
+    manager.test_connection = AsyncMock(return_value=True)
+    manager.create_tables = AsyncMock()
+    manager.close = AsyncMock()
+    return manager
+
+
+# =============================================================================
+# Service Fixtures
+# =============================================================================
+
+@pytest.fixture
+def mock_user_service():
+    """Create a mock UserService."""
+    service = Mock()
+    service.get_user = AsyncMock()
+    service.create_user = AsyncMock()
+    service.update_user = AsyncMock()
+    service.delete_user = AsyncMock()
+    service.list_users = AsyncMock()
+    service.get_user_by_email = AsyncMock()
+    service.get_user_by_email_global = AsyncMock()
+    service.verify_password = Mock(return_value=True)
+    return service
+
+
+@pytest.fixture
+def mock_org_service():
+    """Create a mock OrgService."""
+    service = Mock()
+    service.get_organization = AsyncMock()
+    service.create_organization = AsyncMock()
+    service.update_organization = AsyncMock()
+    service.delete_organization = AsyncMock()
+    service.list_organizations = AsyncMock()
+    return service
+
+
+@pytest.fixture
+def mock_document_service():
+    """Create a mock DocumentService."""
+    service = Mock()
+    service.create_document = AsyncMock()
+    service.get_document = AsyncMock()
+    service.update_document = AsyncMock()
+    service.delete_document = AsyncMock()
+    service.list_documents = AsyncMock()
+    return service
+
+
+@pytest.fixture
+def mock_folder_service():
+    """Create a mock FolderService."""
+    service = Mock()
+    service.create_folder = AsyncMock()
+    service.get_folder = AsyncMock()
+    service.delete_folder = AsyncMock()
+    service.list_folders = AsyncMock()
+    service.get_folder_tree = AsyncMock()
+    return service
+
+
+@pytest.fixture
+def mock_audit_service():
+    """Create a mock AuditService."""
+    service = Mock()
+    service.log_event = AsyncMock()
+    service.get_audit_logs = AsyncMock()
+    service.get_user_activity = AsyncMock()
+    return service
+
+
+# =============================================================================
+# Helper Functions
+# =============================================================================
+
+def create_mock_result(data: Any) -> Mock:
+    """Create a mock SQLAlchemy result object."""
+    result = Mock()
+    result.scalar_one_or_none = Mock(return_value=data)
+    result.scalars = Mock(return_value=Mock(all=Mock(return_value=[data] if data else [])))
+    result.scalar = Mock(return_value=data)
+    return result
+
+
+def create_auth_header(token: str) -> Dict[str, str]:
+    """Create an authorization header with a bearer token."""
+    return {"Authorization": f"Bearer {token}"}
+
+
+# =============================================================================
+# GCS Cleanup Utilities
+# =============================================================================
+
+class GCSTestCleanup:
+    """Track and cleanup GCS objects created during tests."""
+
+    def __init__(self, bucket_name: str):
+        self.bucket_name = bucket_name
+        self.created_objects: List[str] = []
+        self.test_prefix = f"test-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}"
+
+    def track(self, object_path: str):
+        """Track an object path for cleanup."""
+        self.created_objects.append(object_path)
+
+    def get_test_path(self, filename: str) -> str:
+        """Generate a test-prefixed path for isolation."""
+        return f"{self.test_prefix}/{filename}"
+
+    async def cleanup(self):
+        """Delete all tracked objects from GCS."""
+        # Import here to avoid circular imports during test collection
+        try:
+            from app.core.gcs_client import gcs_client
+            if not gcs_client.is_initialized:
+                return
+
+            for path in self.created_objects:
+                try:
+                    gcs_client.delete_file(path)
+                except Exception:
+                    pass  # Ignore cleanup errors
+        except ImportError:
+            pass
+        self.created_objects.clear()
+
+    async def cleanup_prefix(self):
+        """Delete all objects with the test prefix."""
+        try:
+            from app.core.gcs_client import gcs_client
+            if not gcs_client.is_initialized:
+                return
+
+            # List and delete all objects with test prefix
+            bucket = gcs_client.client.bucket(self.bucket_name)
+            blobs = bucket.list_blobs(prefix=self.test_prefix)
+            for blob in blobs:
+                blob.delete()
+        except Exception:
+            pass
+
+
+@pytest.fixture
+def gcs_cleanup() -> Generator[GCSTestCleanup, None, None]:
+    """
+    Provide GCS cleanup utility that tracks and cleans up objects.
+    Automatically cleans up after each test.
+    """
+    bucket_name = os.environ.get("GCS_BUCKET_NAME", "test-bucket")
+    cleanup = GCSTestCleanup(bucket_name)
+    yield cleanup
+    # Synchronous cleanup for fixture teardown
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            asyncio.ensure_future(cleanup.cleanup())
+        else:
+            loop.run_until_complete(cleanup.cleanup())
+    except RuntimeError:
+        pass
+
+
+# =============================================================================
+# File Content Fixtures
+# =============================================================================
+
+@pytest.fixture
+def sample_pdf_content() -> bytes:
+    """Generate minimal valid PDF content for testing."""
+    pdf_content = b"""%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>
+endobj
+xref
+0 4
+0000000000 65535 f
+0000000009 00000 n
+0000000058 00000 n
+0000000115 00000 n
+trailer
+<< /Size 4 /Root 1 0 R >>
+startxref
+195
+%%EOF"""
+    return pdf_content
+
+
+@pytest.fixture
+def sample_xlsx_content() -> bytes:
+    """Generate minimal XLSX content for testing."""
+    # Try loading from sample_files directory first
+    sample_path = Path(__file__).parent / "fixtures" / "sample_files" / "test_spreadsheet.xlsx"
+    if sample_path.exists():
+        return sample_path.read_bytes()
+
+    # Fallback: return minimal valid xlsx header bytes
+    return b'PK\x03\x04\x14\x00\x00\x00\x08\x00'
+
+
+@pytest.fixture
+def large_file_content() -> bytes:
+    """Generate file content exceeding 50MB limit."""
+    return b"x" * (51 * 1024 * 1024)  # 51MB
+
+
+@pytest.fixture
+def invalid_file_content() -> bytes:
+    """Generate invalid file content (not PDF or XLSX)."""
+    return b"This is not a valid PDF or XLSX file"
+
+
+# =============================================================================
+# Utility Fixtures
+# =============================================================================
+
+@pytest.fixture
+def unique_email() -> str:
+    """Generate a unique email address."""
+    return f"user_{uuid.uuid4().hex[:12]}@test.example.com"
+
+
+@pytest.fixture
+def unique_org_name() -> str:
+    """Generate a unique organization name."""
+    return f"Test Org {uuid.uuid4().hex[:8]}"
+
+
+@pytest.fixture
+def unique_folder_name() -> str:
+    """Generate a unique folder name."""
+    return f"Folder {uuid.uuid4().hex[:8]}"
+
+
+# =============================================================================
+# Helper Functions
+# =============================================================================
+
+# Export helper functions
+__all__ = [
+    "fake",
+    "create_mock_result",
+    "create_auth_header",
+    "GCSTestCleanup",
+]

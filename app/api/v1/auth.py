@@ -1,9 +1,12 @@
 from typing import Dict, Any, Optional
+import asyncio
 
-from fastapi import APIRouter, HTTPException, status, Depends
+from fastapi import APIRouter, HTTPException, status, Depends, Request
 from pydantic import BaseModel, Field, field_validator
 
 from app.core.logging import get_service_logger
+from app.core.db_models import AuditAction, AuditEntityType
+from app.services.audit_service import audit_service
 from app.core.simple_auth import (
     get_current_user_dict,
     validate_user_session,
@@ -16,7 +19,7 @@ from app.core.exceptions import (
     RefreshTokenInvalidError,
 )
 from fastapi.security import HTTPBearer
-from datetime import datetime
+from datetime import datetime, timezone
 from app.services.auth_service import (
     auth_service,
     InvalidCredentialsError,
@@ -309,12 +312,13 @@ class LogoutAllResponse(BaseModel):
         },
     },
 )
-async def login(request: LoginRequest) -> AuthResponse:
+async def login(login_request: LoginRequest, request: Request) -> AuthResponse:
     """
     Authenticate user and return session token (MVP).
 
     Args:
-        request: Login credentials
+        login_request: Login credentials
+        request: FastAPI request object for audit context
 
     Returns:
         Authentication response with session token and user data
@@ -323,11 +327,11 @@ async def login(request: LoginRequest) -> AuthResponse:
         HTTPException: If authentication fails
     """
     try:
-        logger.info("Session-based login attempt", email=request.email)
+        logger.info("Session-based login attempt", email=login_request.email)
 
         # Authenticate user and get user info
         access_token, refresh_token, user_data = await auth_service.authenticate_user(
-            email=request.email, password=request.password
+            email=login_request.email, password=login_request.password
         )
 
         # For session-based auth, we'll create a simple session instead of using JWT
@@ -344,9 +348,30 @@ async def login(request: LoginRequest) -> AuthResponse:
 
         logger.info(
             "Session-based login successful",
-            email=request.email,
+            email=login_request.email,
             user_id=user_data["user_id"],
             session_id=session.session_id[:8] + "...",
+        )
+
+        # Audit logging for successful login (non-blocking)
+        client_ip = request.client.host if request.client else None
+        user_agent = request.headers.get("user-agent")
+        asyncio.create_task(
+            audit_service.log_event(
+                org_id=user_data["org_id"],
+                action=AuditAction.LOGIN,
+                entity_type=AuditEntityType.USER,
+                entity_id=user_data["user_id"],
+                user_id=user_data["user_id"],
+                details={
+                    "email": user_data["email"],
+                    "session_id": session.session_id,
+                    "operation": "login",
+                },
+                ip_address=client_ip,
+                session_id=session.session_id,
+                user_agent=user_agent,
+            )
         )
 
         # Return session tokens in AuthResponse format
@@ -356,7 +381,7 @@ async def login(request: LoginRequest) -> AuthResponse:
             or session.session_id,  # Refresh token or fallback
             expires_in=session.time_until_expiry(),
             refresh_expires_in=(
-                int((session.refresh_expires_at - datetime.utcnow()).total_seconds())
+                int((session.refresh_expires_at - datetime.now(timezone.utc)).total_seconds())
                 if session.refresh_expires_at
                 else session.time_until_expiry()
             ),
@@ -379,22 +404,22 @@ async def login(request: LoginRequest) -> AuthResponse:
         )
 
     except InvalidCredentialsError:
-        logger.warning("Login failed - invalid credentials", email=request.email)
+        logger.warning("Login failed - invalid credentials", email=login_request.email)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid email or password"
         )
     except UserInactiveError:
-        logger.warning("Login failed - user inactive", email=request.email)
+        logger.warning("Login failed - user inactive", email=login_request.email)
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail="User account is inactive"
         )
     except OrganizationInactiveError:
-        logger.warning("Login failed - organization inactive", email=request.email)
+        logger.warning("Login failed - organization inactive", email=login_request.email)
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail="Organization is inactive"
         )
     except Exception as e:
-        logger.error("Login error", email=request.email, error=str(e))
+        logger.error("Login error", email=login_request.email, error=str(e))
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Authentication failed due to server error",
@@ -703,6 +728,7 @@ security = HTTPBearer()
     description="Logout user by invalidating their session token. Session will be invalid for future requests.",
 )
 async def logout(
+    request: Request,
     current_user: Dict[str, Any] = Depends(get_current_user_dict),
 ) -> LogoutResponse:
     """
@@ -713,6 +739,7 @@ async def logout(
     to get a new valid session.
 
     Args:
+        request: FastAPI request object for audit context
         current_user: Current user info from session validation
 
     Returns:
@@ -745,13 +772,34 @@ async def logout(
             )
             # Still return success since the goal (session invalid) is achieved
 
-        logout_time = datetime.utcnow().isoformat()
+        logout_time = datetime.now(timezone.utc).isoformat()
 
         logger.info(
             "User logged out successfully",
             user_id=user_id,
             org_id=org_id,
             logged_out_at=logout_time,
+        )
+
+        # Audit logging for logout (non-blocking)
+        client_ip = request.client.host if request.client else None
+        user_agent = request.headers.get("user-agent")
+        asyncio.create_task(
+            audit_service.log_event(
+                org_id=org_id,
+                action=AuditAction.LOGOUT,
+                entity_type=AuditEntityType.USER,
+                entity_id=user_id,
+                user_id=user_id,
+                details={
+                    "email": current_user.get("email"),
+                    "session_id": session_id,
+                    "operation": "logout",
+                },
+                ip_address=client_ip,
+                session_id=session_id,
+                user_agent=user_agent,
+            )
         )
 
         return LogoutResponse(
@@ -774,6 +822,7 @@ async def logout(
     description="Security feature: Logout user from all devices by invalidating all their active sessions. Useful for security incidents.",
 )
 async def logout_all_sessions(
+    request: Request,
     current_user: Dict[str, Any] = Depends(get_current_user_dict),
 ) -> LogoutAllResponse:
     """
@@ -786,6 +835,7 @@ async def logout_all_sessions(
     - Security policy requires session reset
 
     Args:
+        request: FastAPI request object for audit context
         current_user: Current user info from session validation
 
     Returns:
@@ -820,7 +870,7 @@ async def logout_all_sessions(
 
         invalidated_count = invalidate_all_user_sessions(user_id, org_id)
 
-        logout_time = datetime.utcnow().isoformat()
+        logout_time = datetime.now(timezone.utc).isoformat()
 
         logger.info(
             "🔒 LOGOUT-ALL completed successfully",
@@ -828,6 +878,29 @@ async def logout_all_sessions(
             org_id=org_id,
             sessions_invalidated=invalidated_count,
             logged_out_at=logout_time,
+        )
+
+        # Audit logging for logout-all (non-blocking)
+        client_ip = request.client.host if request.client else None
+        user_agent = request.headers.get("user-agent")
+        asyncio.create_task(
+            audit_service.log_event(
+                org_id=org_id,
+                action=AuditAction.LOGOUT,
+                entity_type=AuditEntityType.USER,
+                entity_id=user_id,
+                user_id=user_id,
+                details={
+                    "email": current_user.get("email"),
+                    "session_id": session_id,
+                    "sessions_invalidated": invalidated_count,
+                    "operation": "logout_all",
+                    "security_action": True,
+                },
+                ip_address=client_ip,
+                session_id=session_id,
+                user_agent=user_agent,
+            )
         )
 
         return LogoutAllResponse(
@@ -1241,7 +1314,7 @@ async def refresh_session_token(request: RefreshTokenRequest) -> AuthResponse:
         # Calculate expiration times
         expires_in = new_session.time_until_expiry()
         refresh_expires_in = (
-            int((new_session.refresh_expires_at - datetime.utcnow()).total_seconds())
+            int((new_session.refresh_expires_at - datetime.now(timezone.utc)).total_seconds())
             if new_session.refresh_expires_at
             else 0
         )
@@ -1319,7 +1392,7 @@ async def debug_session_info(
         org_id = current_user.get("org_id")
 
         diagnostic_info = {
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "session_id_length": len(session_id) if session_id else 0,
             "session_id_prefix": session_id[:20] + "..." if session_id else "N/A",
             "validation_steps": {},
