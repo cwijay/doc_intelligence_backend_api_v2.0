@@ -53,8 +53,12 @@ async def list_audit_logs(
         None,
         description="Filter by action type (CREATE, UPDATE, DELETE, LOGIN, LOGOUT, UPLOAD, DOWNLOAD, MOVE)",
     ),
-    start_date: Optional[datetime] = Query(None, description="Filter from date (ISO format)"),
-    end_date: Optional[datetime] = Query(None, description="Filter to date (ISO format)"),
+    start_date: Optional[datetime] = Query(
+        None, description="Filter from date (ISO format)"
+    ),
+    end_date: Optional[datetime] = Query(
+        None, description="Filter to date (ISO format)"
+    ),
     current_user: Dict[str, Any] = Depends(get_current_user_dict),
 ):
     """
@@ -150,8 +154,12 @@ async def get_my_activity(
         None,
         description="Filter by action type (CREATE, UPDATE, DELETE, LOGIN, LOGOUT, UPLOAD, DOWNLOAD, MOVE)",
     ),
-    start_date: Optional[datetime] = Query(None, description="Filter from date (ISO format)"),
-    end_date: Optional[datetime] = Query(None, description="Filter to date (ISO format)"),
+    start_date: Optional[datetime] = Query(
+        None, description="Filter from date (ISO format)"
+    ),
+    end_date: Optional[datetime] = Query(
+        None, description="Filter to date (ISO format)"
+    ),
     current_user: Dict[str, Any] = Depends(get_current_user_dict),
 ):
     """

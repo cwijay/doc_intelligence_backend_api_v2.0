@@ -136,12 +136,23 @@ def validate_domain_dns(domain: str) -> bool:
     try:
         dns.resolver.resolve(domain, "A")
         return True
-    except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer, dns.resolver.Timeout, dns.resolver.NoNameservers):
+    except (
+        dns.resolver.NXDOMAIN,
+        dns.resolver.NoAnswer,
+        dns.resolver.Timeout,
+        dns.resolver.NoNameservers,
+    ):
         try:
             # Try MX record as fallback
             dns.resolver.resolve(domain, "MX")
             return True
-        except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer, dns.resolver.Timeout, dns.resolver.NoNameservers, dns.exception.DNSException):
+        except (
+            dns.resolver.NXDOMAIN,
+            dns.resolver.NoAnswer,
+            dns.resolver.Timeout,
+            dns.resolver.NoNameservers,
+            dns.exception.DNSException,
+        ):
             return False
     except dns.exception.DNSException:
         # Catch any other DNS-specific exceptions

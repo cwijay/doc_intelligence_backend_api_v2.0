@@ -14,7 +14,7 @@ Each sub-module follows the Single Responsibility Principle and provides
 focused functionality with comprehensive documentation and error handling.
 """
 
-from fastapi import APIRouter, status
+from fastapi import APIRouter
 
 # Import all sub-routers
 from app.api.v1.documents_modules.document_upload import router as upload_router
@@ -98,9 +98,7 @@ async def documents_health_check():
             health_status["status"] = "degraded"
             health_status["endpoints"] = {
                 "upload": (
-                    "Limited"
-                    if not health_status["components"]["gcs"]
-                    else "Available"
+                    "Limited" if not health_status["components"]["gcs"] else "Available"
                 ),
                 "management": (
                     "Limited"
@@ -108,9 +106,7 @@ async def documents_health_check():
                     else "Available"
                 ),
                 "download": (
-                    "Limited"
-                    if not health_status["components"]["gcs"]
-                    else "Available"
+                    "Limited" if not health_status["components"]["gcs"] else "Available"
                 ),
                 "sync": "Limited" if not all_healthy else "Available",
             }

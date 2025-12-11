@@ -10,7 +10,6 @@ This service handles all storage-related operations:
 """
 
 from pathlib import Path
-from typing import Optional, Dict, Any
 from datetime import datetime
 
 from sqlalchemy import select
@@ -37,11 +36,15 @@ class DocumentStorageService(DocumentBaseService):
         """
         try:
             async with self.db.session() as session:
-                stmt = select(DocumentModel.id).where(
-                    DocumentModel.organization_id == org_id,
-                    DocumentModel.storage_path == storage_path,
-                    DocumentModel.is_active == True
-                ).limit(1)
+                stmt = (
+                    select(DocumentModel.id)
+                    .where(
+                        DocumentModel.organization_id == org_id,
+                        DocumentModel.storage_path == storage_path,
+                        DocumentModel.is_active == True,
+                    )
+                    .limit(1)
+                )
                 result = await session.execute(stmt)
                 exists = result.scalar_one_or_none() is not None
                 return exists

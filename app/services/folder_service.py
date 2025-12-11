@@ -17,7 +17,12 @@ from app.models.schemas import (
     FolderFilters,
 )
 from app.core.db_client import db
-from app.core.db_models import FolderModel, OrganizationModel, AuditAction, AuditEntityType
+from app.core.db_models import (
+    FolderModel,
+    OrganizationModel,
+    AuditAction,
+    AuditEntityType,
+)
 from app.core.gcs_client import gcs_client, GCSClientError
 from app.core.logging import get_service_logger
 from app.services.audit_service import audit_service
@@ -27,16 +32,19 @@ logger = get_service_logger("folder")
 
 class FolderNotFoundError(Exception):
     """Folder not found error."""
+
     pass
 
 
 class FolderAlreadyExistsError(Exception):
     """Folder already exists error."""
+
     pass
 
 
 class FolderValidationError(Exception):
     """Folder validation error."""
+
     pass
 
 
@@ -47,6 +55,7 @@ class FolderService:
         self.logger = logger
         self.max_depth = 5
         from app.services.org_service import organization_service
+
         self.org_service = organization_service
 
     def _model_to_pydantic(self, model: FolderModel) -> Folder:
@@ -107,8 +116,7 @@ class FolderService:
             async with db.session() as session:
                 # Verify organization exists
                 org_stmt = select(OrganizationModel).where(
-                    OrganizationModel.id == org_id,
-                    OrganizationModel.is_active == True
+                    OrganizationModel.id == org_id, OrganizationModel.is_active == True
                 )
                 org_result = await session.execute(org_stmt)
                 if not org_result.scalar_one_or_none():
@@ -122,7 +130,7 @@ class FolderService:
                     parent_stmt = select(FolderModel).where(
                         FolderModel.id == folder_data.parent_folder_id,
                         FolderModel.organization_id == org_id,
-                        FolderModel.is_active == True
+                        FolderModel.is_active == True,
                     )
                     parent_result = await session.execute(parent_stmt)
                     parent_folder = parent_result.scalar_one_or_none()
@@ -152,7 +160,7 @@ class FolderService:
                     FolderModel.organization_id == org_id,
                     FolderModel.name == folder_data.name,
                     FolderModel.parent_folder_id == folder_data.parent_folder_id,
-                    FolderModel.is_active == True
+                    FolderModel.is_active == True,
                 )
                 existing_result = await session.execute(existing_stmt)
                 if existing_result.scalar_one_or_none():
@@ -166,7 +174,9 @@ class FolderService:
                     folder_path = full_path.lstrip("/")
 
                     try:
-                        gcs_result = gcs_client.create_folder_structure(org_name, folder_path)
+                        gcs_result = gcs_client.create_folder_structure(
+                            org_name, folder_path
+                        )
                         self.logger.info(
                             "Created GCS folder structure",
                             org_id=org_id,
@@ -181,7 +191,9 @@ class FolderService:
                             folder_path=folder_path,
                             error=str(e),
                         )
-                        raise FolderValidationError(f"Failed to create folder in GCS: {e}")
+                        raise FolderValidationError(
+                            f"Failed to create folder in GCS: {e}"
+                        )
 
                 # Create folder in database
                 folder_id = str(uuid4())
@@ -260,15 +272,13 @@ class FolderService:
                 stmt = select(FolderModel).where(
                     FolderModel.id == folder_id,
                     FolderModel.organization_id == org_id,
-                    FolderModel.is_active == True
+                    FolderModel.is_active == True,
                 )
                 result = await session.execute(stmt)
                 folder_model = result.scalar_one_or_none()
 
                 if not folder_model:
-                    raise FolderNotFoundError(
-                        f"Folder with ID {folder_id} not found"
-                    )
+                    raise FolderNotFoundError(f"Folder with ID {folder_id} not found")
 
                 folder = self._model_to_pydantic(folder_model)
                 self.logger.debug(
@@ -309,8 +319,7 @@ class FolderService:
             async with db.session() as session:
                 # Build base query
                 stmt = select(FolderModel).where(
-                    FolderModel.organization_id == org_id,
-                    FolderModel.is_active == True
+                    FolderModel.organization_id == org_id, FolderModel.is_active == True
                 )
 
                 # Apply filters
@@ -319,7 +328,9 @@ class FolderService:
                         stmt = stmt.where(FolderModel.name.ilike(f"%{filters.name}%"))
 
                     if filters.parent_folder_id is not None:
-                        stmt = stmt.where(FolderModel.parent_folder_id == filters.parent_folder_id)
+                        stmt = stmt.where(
+                            FolderModel.parent_folder_id == filters.parent_folder_id
+                        )
 
                 # Get total count
                 count_stmt = select(func.count()).select_from(stmt.subquery())
@@ -374,10 +385,14 @@ class FolderService:
         """
         try:
             async with db.session() as session:
-                stmt = select(FolderModel).where(
-                    FolderModel.organization_id == org_id,
-                    FolderModel.is_active == True
-                ).order_by(FolderModel.path)
+                stmt = (
+                    select(FolderModel)
+                    .where(
+                        FolderModel.organization_id == org_id,
+                        FolderModel.is_active == True,
+                    )
+                    .order_by(FolderModel.path)
+                )
 
                 result = await session.execute(stmt)
                 folder_models = result.scalars().all()
@@ -386,7 +401,9 @@ class FolderService:
                 folder_tree = self._build_folder_tree(all_folders)
 
                 self.logger.debug(
-                    "Folder tree retrieved", org_id=org_id, total_folders=len(all_folders)
+                    "Folder tree retrieved",
+                    org_id=org_id,
+                    total_folders=len(all_folders),
                 )
 
                 return FolderTree(folders=folder_tree, total_folders=len(all_folders))
@@ -432,7 +449,7 @@ class FolderService:
                 folder_stmt = select(FolderModel).where(
                     FolderModel.id == folder_id,
                     FolderModel.organization_id == org_id,
-                    FolderModel.is_active == True
+                    FolderModel.is_active == True,
                 )
                 folder_result = await session.execute(folder_stmt)
                 folder_model = folder_result.scalar_one_or_none()
@@ -449,7 +466,7 @@ class FolderService:
                     parent_stmt = select(FolderModel).where(
                         FolderModel.id == new_parent_folder_id,
                         FolderModel.organization_id == org_id,
-                        FolderModel.is_active == True
+                        FolderModel.is_active == True,
                     )
                     parent_result = await session.execute(parent_stmt)
                     new_parent = parent_result.scalar_one_or_none()
@@ -479,7 +496,7 @@ class FolderService:
                     FolderModel.name == folder_model.name,
                     FolderModel.parent_folder_id == new_parent_folder_id,
                     FolderModel.id != folder_id,
-                    FolderModel.is_active == True
+                    FolderModel.is_active == True,
                 )
                 existing_result = await session.execute(existing_stmt)
                 if existing_result.scalar_one_or_none():
@@ -498,7 +515,9 @@ class FolderService:
                         org_name = await self._get_organization_name(org_id)
                         old_gcs_path = old_path.lstrip("/")
                         new_gcs_path = new_path.lstrip("/")
-                        gcs_client.move_folder_structure(org_name, old_gcs_path, new_gcs_path)
+                        gcs_client.move_folder_structure(
+                            org_name, old_gcs_path, new_gcs_path
+                        )
                         self.logger.info(
                             "Moved GCS folder structure",
                             org_id=org_id,
@@ -516,13 +535,13 @@ class FolderService:
                 descendants_stmt = select(FolderModel).where(
                     FolderModel.organization_id == org_id,
                     FolderModel.path.startswith(old_path + "/"),
-                    FolderModel.is_active == True
+                    FolderModel.is_active == True,
                 )
                 descendants_result = await session.execute(descendants_stmt)
                 descendants = descendants_result.scalars().all()
 
                 for descendant in descendants:
-                    relative_path = descendant.path[len(old_path):]
+                    relative_path = descendant.path[len(old_path) :]
                     descendant.path = new_path + relative_path
                     descendant.updated_at = datetime.now(timezone.utc)
 
@@ -599,7 +618,7 @@ class FolderService:
                 stmt = select(FolderModel).where(
                     FolderModel.id == folder_id,
                     FolderModel.organization_id == org_id,
-                    FolderModel.is_active == True
+                    FolderModel.is_active == True,
                 )
                 result = await session.execute(stmt)
                 folder_model = result.scalar_one_or_none()
@@ -638,7 +657,7 @@ class FolderService:
                 descendants_stmt = select(FolderModel).where(
                     FolderModel.organization_id == org_id,
                     FolderModel.path.startswith(folder_path + "/"),
-                    FolderModel.is_active == True
+                    FolderModel.is_active == True,
                 )
                 descendants_result = await session.execute(descendants_stmt)
                 descendants = descendants_result.scalars().all()
@@ -683,7 +702,7 @@ class FolderService:
 
                 return {
                     "success": True,
-                    "message": f"Folder deleted successfully",
+                    "message": "Folder deleted successfully",
                     "deleted_folders": deleted_folders,
                     "deleted_from_gcs": deleted_from_gcs,
                 }
@@ -718,7 +737,7 @@ class FolderService:
                 stmt = select(FolderModel).where(
                     FolderModel.id == folder_id,
                     FolderModel.organization_id == org_id,
-                    FolderModel.is_active == True
+                    FolderModel.is_active == True,
                 )
                 result = await session.execute(stmt)
                 folder_model = result.scalar_one_or_none()

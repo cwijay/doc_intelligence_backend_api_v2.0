@@ -102,32 +102,46 @@ class DocumentQueryService(DocumentBaseService):
                 # Build base query with ALL filters in SQL for performance
                 stmt = select(DocumentModel).where(
                     DocumentModel.organization_id == org_id,
-                    DocumentModel.is_active == True
+                    DocumentModel.is_active == True,
                 )
 
                 # Apply ALL filters in SQL (not in application)
                 if filters:
                     if filters.file_type:
-                        file_type_value = filters.file_type.value if hasattr(filters.file_type, 'value') else filters.file_type
+                        file_type_value = (
+                            filters.file_type.value
+                            if hasattr(filters.file_type, "value")
+                            else filters.file_type
+                        )
                         stmt = stmt.where(DocumentModel.file_type == file_type_value)
 
                     if filters.status:
-                        status_value = filters.status.value if hasattr(filters.status, 'value') else filters.status
+                        status_value = (
+                            filters.status.value
+                            if hasattr(filters.status, "value")
+                            else filters.status
+                        )
                         stmt = stmt.where(DocumentModel.status == status_value)
 
                     if filters.folder_id:
                         stmt = stmt.where(DocumentModel.folder_id == filters.folder_id)
 
                     if filters.uploaded_by:
-                        stmt = stmt.where(DocumentModel.uploaded_by == filters.uploaded_by)
+                        stmt = stmt.where(
+                            DocumentModel.uploaded_by == filters.uploaded_by
+                        )
 
                     # Apply filename filter in SQL using ILIKE for case-insensitive search
                     if filters.filename:
-                        stmt = stmt.where(DocumentModel.filename.ilike(f"%{filters.filename}%"))
+                        stmt = stmt.where(
+                            DocumentModel.filename.ilike(f"%{filters.filename}%")
+                        )
 
                     # Apply storage_path/folder_path filter in SQL if provided
                     if filters.folder_path:
-                        stmt = stmt.where(DocumentModel.storage_path.ilike(f"%{filters.folder_path}%"))
+                        stmt = stmt.where(
+                            DocumentModel.storage_path.ilike(f"%{filters.folder_path}%")
+                        )
 
                 # Get total count with all filters applied
                 count_stmt = select(func.count()).select_from(stmt.subquery())
@@ -150,11 +164,15 @@ class DocumentQueryService(DocumentBaseService):
 
                         # Enrich document metadata (only for paginated results)
                         if storage_service:
-                            document = await storage_service._enrich_document_metadata(document)
+                            document = await storage_service._enrich_document_metadata(
+                                document
+                            )
 
                         # Safety validation
                         if validation_service:
-                            document = validation_service._ensure_safe_metadata(document)
+                            document = validation_service._ensure_safe_metadata(
+                                document
+                            )
 
                         doc_response = DocumentResponse.model_validate(document)
                         document_responses.append(doc_response)
@@ -238,7 +256,9 @@ class DocumentQueryService(DocumentBaseService):
             documents = []
             for gcs_file in gcs_files:
                 try:
-                    file_type = Document.extract_file_type(gcs_file.get("name", "unknown.pdf"))
+                    file_type = Document.extract_file_type(
+                        gcs_file.get("name", "unknown.pdf")
+                    )
                     if not file_type:
                         file_type = FileType.PDF
 
@@ -249,7 +269,9 @@ class DocumentQueryService(DocumentBaseService):
                         original_filename=gcs_file.get("name", "unknown_file"),
                         file_type=file_type,
                         file_size=gcs_file.get("size", 0),
-                        storage_path=gcs_file.get("path", folder_path + gcs_file.get("name", "")),
+                        storage_path=gcs_file.get(
+                            "path", folder_path + gcs_file.get("name", "")
+                        ),
                         status=DocumentStatus.UPLOADED,
                         uploaded_by="gcs_direct",
                         folder_id=None,
@@ -262,13 +284,22 @@ class DocumentQueryService(DocumentBaseService):
 
                     # Apply filters
                     if filters:
-                        if filters.file_type and document.file_type != filters.file_type:
+                        if (
+                            filters.file_type
+                            and document.file_type != filters.file_type
+                        ):
                             continue
-                        if filters.filename and filters.filename.lower() not in document.filename.lower():
+                        if (
+                            filters.filename
+                            and filters.filename.lower()
+                            not in document.filename.lower()
+                        ):
                             continue
 
                     if storage_service:
-                        document = await storage_service._enrich_document_metadata(document)
+                        document = await storage_service._enrich_document_metadata(
+                            document
+                        )
 
                     if validation_service:
                         document = validation_service._ensure_safe_metadata(document)
@@ -340,7 +371,9 @@ class DocumentQueryService(DocumentBaseService):
         try:
             async with self.db.session() as session:
                 # Build query
-                stmt = select(DocumentModel).where(DocumentModel.organization_id == org_id)
+                stmt = select(DocumentModel).where(
+                    DocumentModel.organization_id == org_id
+                )
 
                 if not include_inactive:
                     stmt = stmt.where(DocumentModel.is_active == True)
@@ -358,7 +391,9 @@ class DocumentQueryService(DocumentBaseService):
                     document = self._model_to_pydantic(doc_model)
 
                     if storage_service:
-                        document = await storage_service._enrich_document_metadata(document)
+                        document = await storage_service._enrich_document_metadata(
+                            document
+                        )
 
                     if validation_service:
                         document = validation_service._ensure_safe_metadata(document)
@@ -386,21 +421,28 @@ class DocumentQueryService(DocumentBaseService):
                 folder_relationship = None
                 if document.folder_id:
                     try:
-                        folder = await self.folder_service.get_folder(org_id, document.folder_id)
+                        folder = await self.folder_service.get_folder(
+                            org_id, document.folder_id
+                        )
                         folder_relationship = DocumentRelationshipFolder(
                             id=folder.id, name=folder.name, path=folder.path
                         )
                     except Exception:
                         folder_relationship = DocumentRelationshipFolder(
-                            id=document.folder_id, name="Unknown Folder", path="/unknown"
+                            id=document.folder_id,
+                            name="Unknown Folder",
+                            path="/unknown",
                         )
 
                 # Get uploader info
                 try:
                     from app.services.user_service import user_service
+
                     uploader = await user_service.get_user(org_id, document.uploaded_by)
                     uploader_relationship = DocumentRelationshipUploader(
-                        id=uploader.id, email=uploader.email, full_name=uploader.full_name
+                        id=uploader.id,
+                        email=uploader.email,
+                        full_name=uploader.full_name,
                     )
                 except Exception:
                     uploader_relationship = DocumentRelationshipUploader(
@@ -417,7 +459,11 @@ class DocumentQueryService(DocumentBaseService):
 
                 database_metadata = DocumentDatabaseMetadata(
                     document_ref=f"documents/{document.id}",
-                    query_method="filename_exact_match" if exact_match else "filename_partial_match",
+                    query_method=(
+                        "filename_exact_match"
+                        if exact_match
+                        else "filename_partial_match"
+                    ),
                     last_updated=document.updated_at,
                 )
 
@@ -474,7 +520,7 @@ class DocumentQueryService(DocumentBaseService):
                 # Build query
                 stmt = select(DocumentModel).where(
                     DocumentModel.organization_id == org_id,
-                    DocumentModel.folder_id == folder.id
+                    DocumentModel.folder_id == folder.id,
                 )
 
                 if not include_inactive:
@@ -482,11 +528,19 @@ class DocumentQueryService(DocumentBaseService):
 
                 if additional_filters:
                     if additional_filters.file_type:
-                        file_type_value = additional_filters.file_type.value if hasattr(additional_filters.file_type, 'value') else additional_filters.file_type
+                        file_type_value = (
+                            additional_filters.file_type.value
+                            if hasattr(additional_filters.file_type, "value")
+                            else additional_filters.file_type
+                        )
                         stmt = stmt.where(DocumentModel.file_type == file_type_value)
 
                     if additional_filters.status:
-                        status_value = additional_filters.status.value if hasattr(additional_filters.status, 'value') else additional_filters.status
+                        status_value = (
+                            additional_filters.status.value
+                            if hasattr(additional_filters.status, "value")
+                            else additional_filters.status
+                        )
                         stmt = stmt.where(DocumentModel.status == status_value)
 
                 result = await session.execute(stmt)
@@ -497,7 +551,10 @@ class DocumentQueryService(DocumentBaseService):
                     document = self._model_to_pydantic(doc_model)
 
                     if additional_filters and additional_filters.filename:
-                        if additional_filters.filename.lower() not in document.filename.lower():
+                        if (
+                            additional_filters.filename.lower()
+                            not in document.filename.lower()
+                        ):
                             continue
 
                     found_documents.append(document)
@@ -528,7 +585,8 @@ class DocumentQueryService(DocumentBaseService):
                     include_inactive=include_inactive,
                     additional_filters=(
                         additional_filters.model_dump(exclude_none=True)
-                        if additional_filters else {}
+                        if additional_filters
+                        else {}
                     ),
                 )
 
@@ -567,8 +625,7 @@ class DocumentQueryService(DocumentBaseService):
         try:
             async with self.db.session() as session:
                 stmt = select(FolderModel).where(
-                    FolderModel.organization_id == org_id,
-                    FolderModel.is_active == True
+                    FolderModel.organization_id == org_id, FolderModel.is_active == True
                 )
 
                 if exact_match:
@@ -583,6 +640,7 @@ class DocumentQueryService(DocumentBaseService):
                 if folder_model:
                     # Convert to Folder pydantic model
                     from app.models.folder import Folder
+
                     return Folder(
                         id=folder_model.id,
                         org_id=folder_model.organization_id,

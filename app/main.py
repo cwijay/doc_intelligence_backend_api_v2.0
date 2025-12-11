@@ -619,9 +619,7 @@ app.include_router(password_router, prefix=settings.API_V1_STR, tags=["Password"
 app.include_router(folders_router, prefix=settings.API_V1_STR, tags=["Folders"])
 
 # Audit log router
-app.include_router(
-    audit_router, prefix=f"{settings.API_V1_STR}/audit", tags=["Audit"]
-)
+app.include_router(audit_router, prefix=f"{settings.API_V1_STR}/audit", tags=["Audit"])
 
 
 # Direct route handler to bypass redirect issues for /api/v1/documents (no trailing slash)
@@ -686,35 +684,6 @@ app.include_router(
 
 # Debug router (development/staging only)
 app.include_router(debug_router, prefix=settings.API_V1_STR, tags=["Debug"])
-
-# Other routers (when implemented)
-# from app.api.v1 import auth, users, documents, search, ai
-#
-# app.include_router(
-#     auth.router,
-#     prefix=f"{settings.API_V1_STR}/auth",
-#     tags=["Authentication"]
-# )
-# app.include_router(
-#     users.router,
-#     prefix=f"{settings.API_V1_STR}/users",
-#     tags=["Users"]
-# )
-# app.include_router(
-#     documents.router,
-#     prefix=f"{settings.API_V1_STR}/documents",
-#     tags=["Documents"]
-# )
-# app.include_router(
-#     search.router,
-#     prefix=f"{settings.API_V1_STR}/search",
-#     tags=["Search"]
-# )
-# app.include_router(
-#     ai.router,
-#     prefix=f"{settings.API_V1_STR}/ai",
-#     tags=["AI Operations"]
-# )
 
 
 if __name__ == "__main__":

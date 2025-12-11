@@ -22,12 +22,13 @@ from sqlalchemy import (
     ForeignKey,
     Index,
 )
-from sqlalchemy.dialects.postgresql import UUID as PG_UUID, JSONB, TIMESTAMP
+from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
 class AuditAction(str, PyEnum):
     """Audit action types for tracking system events."""
+
     CREATE = "CREATE"
     UPDATE = "UPDATE"
     DELETE = "DELETE"
@@ -40,6 +41,7 @@ class AuditAction(str, PyEnum):
 
 class AuditEntityType(str, PyEnum):
     """Entity types that can be audited."""
+
     ORGANIZATION = "ORGANIZATION"
     USER = "USER"
     FOLDER = "FOLDER"
@@ -48,6 +50,7 @@ class AuditEntityType(str, PyEnum):
 
 class Base(DeclarativeBase):
     """Base class for all models."""
+
     pass
 
 
@@ -57,42 +60,38 @@ class OrganizationModel(Base):
 
     Stores organization data including plan type and settings.
     """
+
     __tablename__ = "organizations"
 
     id: Mapped[str] = mapped_column(
-        String(36),
-        primary_key=True,
-        default=lambda: str(uuid4())
+        String(36), primary_key=True, default=lambda: str(uuid4())
     )
     name: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
     domain: Mapped[Optional[str]] = mapped_column(String(255))
     plan_type: Mapped[str] = mapped_column(String(50), default="free", nullable=False)
-    settings: Mapped[Dict[str, Any]] = mapped_column(JSONB, default=dict, nullable=False)
+    settings: Mapped[Dict[str, Any]] = mapped_column(
+        JSONB, default=dict, nullable=False
+    )
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        default=datetime.utcnow,
-        nullable=False
+        TIMESTAMP(timezone=True), default=datetime.utcnow, nullable=False
     )
     updated_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         default=datetime.utcnow,
         onupdate=datetime.utcnow,
-        nullable=False
+        nullable=False,
     )
 
     # Relationships
     users: Mapped[List["UserModel"]] = relationship(
-        back_populates="organization",
-        cascade="all, delete-orphan"
+        back_populates="organization", cascade="all, delete-orphan"
     )
     folders: Mapped[List["FolderModel"]] = relationship(
-        back_populates="organization",
-        cascade="all, delete-orphan"
+        back_populates="organization", cascade="all, delete-orphan"
     )
     documents: Mapped[List["DocumentModel"]] = relationship(
-        back_populates="organization",
-        cascade="all, delete-orphan"
+        back_populates="organization", cascade="all, delete-orphan"
     )
 
     __table_args__ = (
@@ -121,17 +120,14 @@ class UserModel(Base):
 
     Scoped to organization for multi-tenancy.
     """
+
     __tablename__ = "users"
 
     id: Mapped[str] = mapped_column(
-        String(36),
-        primary_key=True,
-        default=lambda: str(uuid4())
+        String(36), primary_key=True, default=lambda: str(uuid4())
     )
     organization_id: Mapped[str] = mapped_column(
-        String(36),
-        ForeignKey("organizations.id", ondelete="CASCADE"),
-        nullable=False
+        String(36), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False
     )
     email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
     username: Mapped[str] = mapped_column(String(100), nullable=False)
@@ -141,15 +137,13 @@ class UserModel(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     last_login: Mapped[Optional[datetime]] = mapped_column(TIMESTAMP(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        default=datetime.utcnow,
-        nullable=False
+        TIMESTAMP(timezone=True), default=datetime.utcnow, nullable=False
     )
     updated_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         default=datetime.utcnow,
         onupdate=datetime.utcnow,
-        nullable=False
+        nullable=False,
     )
 
     # Relationships
@@ -161,7 +155,9 @@ class UserModel(Base):
         Index("idx_users_org_email", "organization_id", "email"),
         Index("idx_users_org_username", "organization_id", "username"),
         Index("idx_users_is_active", "is_active"),
-        Index("idx_users_org_is_active", "organization_id", "is_active"),  # Common filter combo
+        Index(
+            "idx_users_org_is_active", "organization_id", "is_active"
+        ),  # Common filter combo
     )
 
     def to_dict(self) -> Dict[str, Any]:
@@ -186,17 +182,14 @@ class FolderModel(Base):
 
     Supports nested folder structure with path tracking.
     """
+
     __tablename__ = "folders"
 
     id: Mapped[str] = mapped_column(
-        String(36),
-        primary_key=True,
-        default=lambda: str(uuid4())
+        String(36), primary_key=True, default=lambda: str(uuid4())
     )
     organization_id: Mapped[str] = mapped_column(
-        String(36),
-        ForeignKey("organizations.id", ondelete="CASCADE"),
-        nullable=False
+        String(36), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False
     )
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     parent_folder_id: Mapped[Optional[str]] = mapped_column(String(36))
@@ -204,15 +197,13 @@ class FolderModel(Base):
     created_by: Mapped[str] = mapped_column(String(36), nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        default=datetime.utcnow,
-        nullable=False
+        TIMESTAMP(timezone=True), default=datetime.utcnow, nullable=False
     )
     updated_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         default=datetime.utcnow,
         onupdate=datetime.utcnow,
-        nullable=False
+        nullable=False,
     )
 
     # Relationships
@@ -224,7 +215,9 @@ class FolderModel(Base):
         Index("idx_folders_org_parent", "organization_id", "parent_folder_id"),
         Index("idx_folders_org_name", "organization_id", "name"),
         Index("idx_folders_path", "path"),
-        Index("idx_folders_org_is_active", "organization_id", "is_active"),  # Most folder queries use both
+        Index(
+            "idx_folders_org_is_active", "organization_id", "is_active"
+        ),  # Most folder queries use both
     )
 
     def to_dict(self) -> Dict[str, Any]:
@@ -248,17 +241,14 @@ class DocumentModel(Base):
 
     Actual files are stored in GCS; this table stores metadata only.
     """
+
     __tablename__ = "documents"
 
     id: Mapped[str] = mapped_column(
-        String(36),
-        primary_key=True,
-        default=lambda: str(uuid4())
+        String(36), primary_key=True, default=lambda: str(uuid4())
     )
     organization_id: Mapped[str] = mapped_column(
-        String(36),
-        ForeignKey("organizations.id", ondelete="CASCADE"),
-        nullable=False
+        String(36), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False
     )
     folder_id: Mapped[Optional[str]] = mapped_column(String(36))
     filename: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -270,21 +260,16 @@ class DocumentModel(Base):
     uploaded_by: Mapped[str] = mapped_column(String(36), nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     doc_metadata: Mapped[Dict[str, Any]] = mapped_column(
-        "metadata",  # Column name in database
-        JSONB,
-        default=dict,
-        nullable=False
+        "metadata", JSONB, default=dict, nullable=False  # Column name in database
     )
     created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        default=datetime.utcnow,
-        nullable=False
+        TIMESTAMP(timezone=True), default=datetime.utcnow, nullable=False
     )
     updated_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         default=datetime.utcnow,
         onupdate=datetime.utcnow,
-        nullable=False
+        nullable=False,
     )
 
     # Relationships
@@ -300,7 +285,9 @@ class DocumentModel(Base):
         Index("idx_documents_storage_path", "storage_path"),
         Index("idx_documents_metadata", "metadata", postgresql_using="gin"),
         Index("idx_documents_filename", "filename"),  # Used in document search
-        Index("idx_documents_org_filename", "organization_id", "filename"),  # Common filter combination
+        Index(
+            "idx_documents_org_filename", "organization_id", "filename"
+        ),  # Common filter combination
         Index("idx_documents_uploaded_by", "uploaded_by"),  # Filter by uploader
     )
 
@@ -334,46 +321,27 @@ class AuditLogModel(Base):
     - JSONB for flexible details storage
     - Indexed for common query patterns (org_id, entity_type, created_at)
     """
+
     __tablename__ = "audit_logs"
 
     id: Mapped[str] = mapped_column(
-        String(36),
-        primary_key=True,
-        default=lambda: str(uuid4())
+        String(36), primary_key=True, default=lambda: str(uuid4())
     )
     organization_id: Mapped[str] = mapped_column(
-        String(36),
-        ForeignKey("organizations.id", ondelete="CASCADE"),
-        nullable=False
+        String(36), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False
     )
     user_id: Mapped[Optional[str]] = mapped_column(
-        String(36),
-        nullable=True  # System actions may not have a user
+        String(36), nullable=True  # System actions may not have a user
     )
-    action: Mapped[str] = mapped_column(
-        String(20),
-        nullable=False
-    )
-    entity_type: Mapped[str] = mapped_column(
-        String(20),
-        nullable=False
-    )
-    entity_id: Mapped[str] = mapped_column(
-        String(36),
-        nullable=False
-    )
-    details: Mapped[Dict[str, Any]] = mapped_column(
-        JSONB,
-        default=dict,
-        nullable=False
-    )
+    action: Mapped[str] = mapped_column(String(20), nullable=False)
+    entity_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    entity_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    details: Mapped[Dict[str, Any]] = mapped_column(JSONB, default=dict, nullable=False)
     ip_address: Mapped[Optional[str]] = mapped_column(String(45))  # IPv6 max length
     session_id: Mapped[Optional[str]] = mapped_column(String(36))
     user_agent: Mapped[Optional[str]] = mapped_column(String(512))
     created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        default=datetime.utcnow,
-        nullable=False
+        TIMESTAMP(timezone=True), default=datetime.utcnow, nullable=False
     )
 
     # Relationships
@@ -386,8 +354,18 @@ class AuditLogModel(Base):
         Index("idx_audit_logs_action", "action"),
         Index("idx_audit_logs_created_at", "created_at"),
         # Composite indexes for common query patterns
-        Index("idx_audit_logs_org_type_created", "organization_id", "entity_type", "created_at"),
-        Index("idx_audit_logs_org_user_created", "organization_id", "user_id", "created_at"),
+        Index(
+            "idx_audit_logs_org_type_created",
+            "organization_id",
+            "entity_type",
+            "created_at",
+        ),
+        Index(
+            "idx_audit_logs_org_user_created",
+            "organization_id",
+            "user_id",
+            "created_at",
+        ),
     )
 
     def to_dict(self) -> Dict[str, Any]:

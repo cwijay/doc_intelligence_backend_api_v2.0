@@ -66,7 +66,9 @@ class DatabaseManager:
     async def _async_setup_engine_for_loop(self, loop_id: int):
         """Initialize engine and session factory for the current event loop."""
         if self._shutdown:
-            logger.debug(f"Skipping engine setup for loop {loop_id} - shutdown in progress")
+            logger.debug(
+                f"Skipping engine setup for loop {loop_id} - shutdown in progress"
+            )
             return
 
         if loop_id in self._engines:
@@ -101,7 +103,11 @@ class DatabaseManager:
         try:
             from google.cloud.sql.connector import Connector, IPTypes
 
-            ip_type = IPTypes.PUBLIC if settings.CLOUD_SQL_IP_TYPE == "PUBLIC" else IPTypes.PRIVATE
+            ip_type = (
+                IPTypes.PUBLIC
+                if settings.CLOUD_SQL_IP_TYPE == "PUBLIC"
+                else IPTypes.PRIVATE
+            )
 
             logger.info(
                 f"Attempting Cloud SQL connection: "
@@ -115,7 +121,9 @@ class DatabaseManager:
             connector = Connector(loop=loop)
 
             try:
-                logger.debug(f"Testing Cloud SQL connection (timeout={CLOUD_SQL_CONNECT_TIMEOUT}s)...")
+                logger.debug(
+                    f"Testing Cloud SQL connection (timeout={CLOUD_SQL_CONNECT_TIMEOUT}s)..."
+                )
                 test_conn = await asyncio.wait_for(
                     connector.connect_async(
                         settings.CLOUD_SQL_INSTANCE,
@@ -125,7 +133,7 @@ class DatabaseManager:
                         db=settings.DATABASE_NAME,
                         ip_type=ip_type,
                     ),
-                    timeout=CLOUD_SQL_CONNECT_TIMEOUT
+                    timeout=CLOUD_SQL_CONNECT_TIMEOUT,
                 )
                 await test_conn.close()
                 logger.info("Cloud SQL Connector test connection successful")
@@ -160,7 +168,7 @@ class DatabaseManager:
                         db=settings.DATABASE_NAME,
                         ip_type=ip_type,
                     ),
-                    timeout=CLOUD_SQL_CONNECT_TIMEOUT
+                    timeout=CLOUD_SQL_CONNECT_TIMEOUT,
                 )
                 return conn
 
@@ -200,7 +208,7 @@ class DatabaseManager:
                 "port": settings.DATABASE_PORT,
                 "database": settings.DATABASE_NAME,
                 "user": settings.DATABASE_USER,
-            }
+            },
         )
         return create_async_engine(
             database_url,
@@ -305,7 +313,7 @@ class DatabaseManager:
         if loop_id in self._connectors and self._connectors[loop_id]:
             try:
                 connector = self._connectors[loop_id]
-                if hasattr(connector, 'close_async'):
+                if hasattr(connector, "close_async"):
                     await connector.close_async()
                 else:
                     connector.close()

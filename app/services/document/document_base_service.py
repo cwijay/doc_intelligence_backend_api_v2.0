@@ -11,7 +11,6 @@ This service provides the foundation for all document services with:
 
 from typing import Optional
 from app.core.db_client import db
-from app.core.db_models import DocumentModel
 from app.core.logging import get_service_logger
 from app.models.document import FileType
 
@@ -19,16 +18,19 @@ from app.models.document import FileType
 # Exception classes
 class DocumentNotFoundError(Exception):
     """Document not found error."""
+
     pass
 
 
 class DocumentValidationError(Exception):
     """Document validation error."""
+
     pass
 
 
 class DocumentUploadError(Exception):
     """Document upload error."""
+
     pass
 
 

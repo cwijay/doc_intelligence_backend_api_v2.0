@@ -476,7 +476,9 @@ class GCSClient:
                 raise GCSObjectNotFoundError(f"Document file not found: {storage_path}")
 
             # Calculate expiration
-            expiration = datetime.now(timezone.utc) + timedelta(minutes=expiration_minutes)
+            expiration = datetime.now(timezone.utc) + timedelta(
+                minutes=expiration_minutes
+            )
 
             # Generate signed URL
             signed_url = blob.generate_signed_url(

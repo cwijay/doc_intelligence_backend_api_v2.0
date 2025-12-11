@@ -381,7 +381,11 @@ async def login(login_request: LoginRequest, request: Request) -> AuthResponse:
             or session.session_id,  # Refresh token or fallback
             expires_in=session.time_until_expiry(),
             refresh_expires_in=(
-                int((session.refresh_expires_at - datetime.now(timezone.utc)).total_seconds())
+                int(
+                    (
+                        session.refresh_expires_at - datetime.now(timezone.utc)
+                    ).total_seconds()
+                )
                 if session.refresh_expires_at
                 else session.time_until_expiry()
             ),
@@ -414,7 +418,9 @@ async def login(login_request: LoginRequest, request: Request) -> AuthResponse:
             status_code=status.HTTP_403_FORBIDDEN, detail="User account is inactive"
         )
     except OrganizationInactiveError:
-        logger.warning("Login failed - organization inactive", email=login_request.email)
+        logger.warning(
+            "Login failed - organization inactive", email=login_request.email
+        )
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail="Organization is inactive"
         )
@@ -1107,7 +1113,8 @@ async def list_organizations_for_registration() -> List[OrganizationResponse]:
 )
 async def lookup_organizations(
     query: str = Query(
-        "", description="Search query for organization name (empty string returns all active organizations)"
+        "",
+        description="Search query for organization name (empty string returns all active organizations)",
     )
 ) -> List[OrganizationResponse]:
     """
@@ -1314,7 +1321,11 @@ async def refresh_session_token(request: RefreshTokenRequest) -> AuthResponse:
         # Calculate expiration times
         expires_in = new_session.time_until_expiry()
         refresh_expires_in = (
-            int((new_session.refresh_expires_at - datetime.now(timezone.utc)).total_seconds())
+            int(
+                (
+                    new_session.refresh_expires_at - datetime.now(timezone.utc)
+                ).total_seconds()
+            )
             if new_session.refresh_expires_at
             else 0
         )

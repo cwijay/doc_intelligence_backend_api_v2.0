@@ -7,13 +7,11 @@ This service handles content synchronization between PostgreSQL and GCS:
 - Comprehensive sync validation and reporting
 """
 
-from pathlib import Path
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any
 from datetime import datetime, timezone
 
 from sqlalchemy import select
 
-from app.models.document import Document
 from app.core.gcs_client import gcs_client, GCSClientError
 from app.core.db_models import DocumentModel
 from .document_base_service import (
@@ -66,7 +64,7 @@ class DocumentSyncService(DocumentBaseService):
                 stmt = select(DocumentModel).where(
                     DocumentModel.id == document_id,
                     DocumentModel.organization_id == org_id,
-                    DocumentModel.is_active == True
+                    DocumentModel.is_active == True,
                 )
                 result = await session.execute(stmt)
                 doc_model = result.scalar_one_or_none()
@@ -78,7 +76,9 @@ class DocumentSyncService(DocumentBaseService):
 
                 # Update metadata
                 current_metadata = doc_model.doc_metadata or {}
-                current_metadata["content_synced_at"] = datetime.now(timezone.utc).isoformat()
+                current_metadata["content_synced_at"] = datetime.now(
+                    timezone.utc
+                ).isoformat()
                 current_metadata["content_synced_by"] = user_id
 
                 if metadata:
@@ -137,7 +137,7 @@ class DocumentSyncService(DocumentBaseService):
                 stmt = select(DocumentModel).where(
                     DocumentModel.id == document_id,
                     DocumentModel.organization_id == org_id,
-                    DocumentModel.is_active == True
+                    DocumentModel.is_active == True,
                 )
                 result = await session.execute(stmt)
                 doc_model = result.scalar_one_or_none()
@@ -226,22 +226,28 @@ class DocumentSyncService(DocumentBaseService):
         """
         try:
             async with self.db.session() as session:
-                stmt = select(DocumentModel).where(
-                    DocumentModel.organization_id == org_id,
-                    DocumentModel.is_active == True
-                ).limit(limit)
+                stmt = (
+                    select(DocumentModel)
+                    .where(
+                        DocumentModel.organization_id == org_id,
+                        DocumentModel.is_active == True,
+                    )
+                    .limit(limit)
+                )
 
                 result = await session.execute(stmt)
                 documents = result.scalars().all()
 
                 results = []
                 for doc in documents:
-                    results.append({
-                        "document_id": doc.id,
-                        "filename": doc.filename,
-                        "storage_path": doc.storage_path,
-                        "status": doc.status,
-                    })
+                    results.append(
+                        {
+                            "document_id": doc.id,
+                            "filename": doc.filename,
+                            "storage_path": doc.storage_path,
+                            "status": doc.status,
+                        }
+                    )
 
                 return {
                     "success": True,
@@ -275,4 +281,3 @@ class DocumentSyncService(DocumentBaseService):
             Dictionary with validation results
         """
         return await self.validate_all_documents_sync(org_id=org_id)
-

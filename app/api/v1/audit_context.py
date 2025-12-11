@@ -9,7 +9,9 @@ from typing import Dict, Any, Optional
 from fastapi import Request
 
 
-def extract_audit_context(request: Request, current_user: Dict[str, Any]) -> Dict[str, Any]:
+def extract_audit_context(
+    request: Request, current_user: Dict[str, Any]
+) -> Dict[str, Any]:
     """
     Extract audit context from FastAPI request and user data.
 
@@ -270,7 +272,5 @@ def _filter_sensitive_fields(data: Dict[str, Any]) -> Dict[str, Any]:
     }
 
     return {
-        key: value
-        for key, value in data.items()
-        if key.lower() not in sensitive_fields
+        key: value for key, value in data.items() if key.lower() not in sensitive_fields
     }

@@ -1,6 +1,6 @@
 import math
 import asyncio
-from typing import Optional, Dict, Any
+from typing import Optional
 from datetime import datetime, timezone
 from uuid import uuid4
 
@@ -17,7 +17,12 @@ from app.models.schemas import (
     UserFilters,
 )
 from app.core.db_client import db
-from app.core.db_models import UserModel, OrganizationModel, AuditAction, AuditEntityType
+from app.core.db_models import (
+    UserModel,
+    OrganizationModel,
+    AuditAction,
+    AuditEntityType,
+)
 from app.core.security import hash_password, verify_password
 from app.core.logging import get_service_logger
 from app.services.audit_service import audit_service
@@ -27,16 +32,19 @@ logger = get_service_logger("user")
 
 class UserNotFoundError(Exception):
     """User not found error."""
+
     pass
 
 
 class UserAlreadyExistsError(Exception):
     """User already exists error."""
+
     pass
 
 
 class OrganizationNotFoundError(Exception):
     """Organization not found error."""
+
     pass
 
 
@@ -67,8 +75,7 @@ class UserService:
         try:
             async with db.session() as session:
                 stmt = select(OrganizationModel).where(
-                    OrganizationModel.id == org_id,
-                    OrganizationModel.is_active == True
+                    OrganizationModel.id == org_id, OrganizationModel.is_active == True
                 )
                 result = await session.execute(stmt)
                 org = result.scalar_one_or_none()
@@ -112,8 +119,7 @@ class UserService:
             async with db.session() as session:
                 # Verify organization exists
                 org_stmt = select(OrganizationModel).where(
-                    OrganizationModel.id == org_id,
-                    OrganizationModel.is_active == True
+                    OrganizationModel.id == org_id, OrganizationModel.is_active == True
                 )
                 org_result = await session.execute(org_stmt)
                 if not org_result.scalar_one_or_none():
@@ -124,7 +130,7 @@ class UserService:
                 # Check email uniqueness
                 email_stmt = select(UserModel).where(
                     UserModel.email == user_data.email.lower(),
-                    UserModel.is_active == True
+                    UserModel.is_active == True,
                 )
                 email_result = await session.execute(email_stmt)
                 if email_result.scalar_one_or_none():
@@ -136,7 +142,7 @@ class UserService:
                 username_stmt = select(UserModel).where(
                     UserModel.organization_id == org_id,
                     UserModel.username == user_data.username.lower(),
-                    UserModel.is_active == True
+                    UserModel.is_active == True,
                 )
                 username_result = await session.execute(username_stmt)
                 if username_result.scalar_one_or_none():
@@ -150,7 +156,11 @@ class UserService:
                 # Create new user
                 user_id = str(uuid4())
                 now = datetime.now(timezone.utc)
-                role_value = user_data.role.value if hasattr(user_data.role, 'value') else user_data.role
+                role_value = (
+                    user_data.role.value
+                    if hasattr(user_data.role, "value")
+                    else user_data.role
+                )
 
                 user_model = UserModel(
                     id=user_id,
@@ -233,7 +243,7 @@ class UserService:
                 stmt = select(UserModel).where(
                     UserModel.id == user_id,
                     UserModel.organization_id == org_id,
-                    UserModel.is_active == True
+                    UserModel.is_active == True,
                 )
                 result = await session.execute(stmt)
                 user_model = result.scalar_one_or_none()
@@ -298,7 +308,7 @@ class UserService:
                 stmt = select(UserModel).where(
                     UserModel.id == user_id,
                     UserModel.organization_id == org_id,
-                    UserModel.is_active == True
+                    UserModel.is_active == True,
                 )
                 result = await session.execute(stmt)
                 user_model = result.scalar_one_or_none()
@@ -321,7 +331,7 @@ class UserService:
                     email_check = select(UserModel).where(
                         UserModel.email == update_data.email.lower(),
                         UserModel.id != user_id,
-                        UserModel.is_active == True
+                        UserModel.is_active == True,
                     )
                     email_result = await session.execute(email_check)
                     if email_result.scalar_one_or_none():
@@ -330,12 +340,15 @@ class UserService:
                         )
 
                 # Check username uniqueness if username is being updated
-                if update_data.username and update_data.username.lower() != user_model.username:
+                if (
+                    update_data.username
+                    and update_data.username.lower() != user_model.username
+                ):
                     username_check = select(UserModel).where(
                         UserModel.organization_id == org_id,
                         UserModel.username == update_data.username.lower(),
                         UserModel.id != user_id,
-                        UserModel.is_active == True
+                        UserModel.is_active == True,
                     )
                     username_result = await session.execute(username_check)
                     if username_result.scalar_one_or_none():
@@ -352,7 +365,7 @@ class UserService:
                         user_model.email = value.lower()
                     elif field == "username" and value:
                         user_model.username = value.lower()
-                    elif field == "role" and hasattr(value, 'value'):
+                    elif field == "role" and hasattr(value, "value"):
                         user_model.role = value.value
                     elif hasattr(user_model, field):
                         setattr(user_model, field, value)
@@ -445,14 +458,17 @@ class UserService:
 
                 # Build base query
                 stmt = select(UserModel).where(
-                    UserModel.organization_id == org_id,
-                    UserModel.is_active == True
+                    UserModel.organization_id == org_id, UserModel.is_active == True
                 )
 
                 # Apply filters
                 if filters:
                     if filters.role:
-                        role_value = filters.role.value if hasattr(filters.role, 'value') else filters.role
+                        role_value = (
+                            filters.role.value
+                            if hasattr(filters.role, "value")
+                            else filters.role
+                        )
                         stmt = stmt.where(UserModel.role == role_value)
 
                     if filters.is_active is not None:
@@ -462,10 +478,14 @@ class UserService:
                         stmt = stmt.where(UserModel.email.ilike(f"%{filters.email}%"))
 
                     if filters.username:
-                        stmt = stmt.where(UserModel.username.ilike(f"%{filters.username}%"))
+                        stmt = stmt.where(
+                            UserModel.username.ilike(f"%{filters.username}%")
+                        )
 
                     if filters.full_name:
-                        stmt = stmt.where(UserModel.full_name.ilike(f"%{filters.full_name}%"))
+                        stmt = stmt.where(
+                            UserModel.full_name.ilike(f"%{filters.full_name}%")
+                        )
 
                 # Get total count
                 count_stmt = select(func.count()).select_from(stmt.subquery())
@@ -548,7 +568,7 @@ class UserService:
                 stmt = select(UserModel).where(
                     UserModel.id == user_id,
                     UserModel.organization_id == org_id,
-                    UserModel.is_active == True
+                    UserModel.is_active == True,
                 )
                 result = await session.execute(stmt)
                 user_model = result.scalar_one_or_none()
@@ -572,7 +592,10 @@ class UserService:
                 await session.flush()
 
                 self.logger.info(
-                    "User deleted", org_id=org_id, user_id=user_id, email=user_model.email
+                    "User deleted",
+                    org_id=org_id,
+                    user_id=user_id,
+                    email=user_model.email,
                 )
 
                 # Audit logging (non-blocking)
@@ -638,7 +661,7 @@ class UserService:
                 stmt = select(UserModel).where(
                     UserModel.organization_id == org_id,
                     UserModel.email == email.lower(),
-                    UserModel.is_active == True
+                    UserModel.is_active == True,
                 )
                 result = await session.execute(stmt)
                 user_model = result.scalar_one_or_none()
@@ -684,7 +707,7 @@ class UserService:
                 stmt = select(UserModel).where(
                     UserModel.organization_id == org_id,
                     UserModel.username == username.lower(),
-                    UserModel.is_active == True
+                    UserModel.is_active == True,
                 )
                 result = await session.execute(stmt)
                 user_model = result.scalar_one_or_none()
@@ -717,7 +740,7 @@ class UserService:
                 stmt = select(UserModel).where(
                     UserModel.organization_id == org_id,
                     UserModel.email == email.lower(),
-                    UserModel.is_active == True
+                    UserModel.is_active == True,
                 )
                 result = await session.execute(stmt)
                 user_model = result.scalar_one_or_none()
@@ -743,8 +766,7 @@ class UserService:
         try:
             async with db.session() as session:
                 stmt = select(UserModel).where(
-                    UserModel.email == email.lower(),
-                    UserModel.is_active == True
+                    UserModel.email == email.lower(), UserModel.is_active == True
                 )
                 result = await session.execute(stmt)
                 user_model = result.scalar_one_or_none()
@@ -765,8 +787,7 @@ class UserService:
         try:
             async with db.session() as session:
                 stmt = select(UserModel).where(
-                    UserModel.email == email.lower(),
-                    UserModel.is_active == True
+                    UserModel.email == email.lower(), UserModel.is_active == True
                 )
                 result = await session.execute(stmt)
                 user_model = result.scalar_one_or_none()
@@ -801,8 +822,7 @@ class UserService:
         try:
             async with db.session() as session:
                 stmt = select(UserModel).where(
-                    UserModel.email == email.lower(),
-                    UserModel.is_active == True
+                    UserModel.email == email.lower(), UserModel.is_active == True
                 )
                 result = await session.execute(stmt)
                 user_model = result.scalar_one_or_none()
@@ -826,7 +846,7 @@ class UserService:
                 stmt = select(UserModel).where(
                     UserModel.id == user_id,
                     UserModel.organization_id == org_id,
-                    UserModel.is_active == True
+                    UserModel.is_active == True,
                 )
                 result = await session.execute(stmt)
                 user_model = result.scalar_one_or_none()
@@ -840,7 +860,9 @@ class UserService:
                 user_model.updated_at = datetime.now(timezone.utc)
                 await session.flush()
 
-                self.logger.debug("User last login updated", org_id=org_id, user_id=user_id)
+                self.logger.debug(
+                    "User last login updated", org_id=org_id, user_id=user_id
+                )
 
                 return True
 

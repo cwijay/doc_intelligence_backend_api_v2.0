@@ -26,9 +26,7 @@ class Document(BaseModel):
     """Document model for file management."""
 
     # Primary key - document ID
-    id: Optional[str] = Field(
-        None, description="Unique document identifier"
-    )
+    id: Optional[str] = Field(None, description="Unique document identifier")
 
     # Multi-tenancy and organization
     org_id: str = Field(..., description="Organization ID (foreign key)")
@@ -61,10 +59,12 @@ class Document(BaseModel):
 
     # Timestamps
     created_at: datetime = Field(
-        default_factory=lambda: datetime.now(timezone.utc), description="When document was uploaded"
+        default_factory=lambda: datetime.now(timezone.utc),
+        description="When document was uploaded",
     )
     updated_at: datetime = Field(
-        default_factory=lambda: datetime.now(timezone.utc), description="When document was last updated"
+        default_factory=lambda: datetime.now(timezone.utc),
+        description="When document was last updated",
     )
 
     model_config = ConfigDict(
@@ -326,7 +326,10 @@ class Document(BaseModel):
             self.metadata["status_history"] = []
 
         self.metadata["status_history"].append(
-            {"status": new_status.value, "timestamp": datetime.now(timezone.utc).isoformat()}
+            {
+                "status": new_status.value,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            }
         )
 
     def mark_as_failed(self, error_message: str):

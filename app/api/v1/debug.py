@@ -3,7 +3,7 @@ Debug endpoints for troubleshooting authentication and database issues.
 These endpoints should only be enabled in development/staging environments.
 """
 
-import os
+import sys
 from typing import Dict, Any, Optional
 from fastapi import APIRouter, HTTPException, status, Query, Depends
 from pydantic import BaseModel, Field
@@ -104,9 +104,7 @@ async def check_database_status(
 
                 # Count users
                 user_count_result = await session.execute(
-                    select(func.count(UserModel.id)).where(
-                        UserModel.is_active == True
-                    )
+                    select(func.count(UserModel.id)).where(UserModel.is_active == True)
                 )
                 user_count = user_count_result.scalar() or 0
 
@@ -129,8 +127,6 @@ async def check_database_status(
         return DatabaseStatusResponse(
             initialized=False, can_connect=False, error=str(e)
         )
-
-
 
 
 @router.get(
@@ -338,7 +334,7 @@ async def get_environment_info(_: None = Depends(check_debug_access)) -> DebugRe
             "log_level": settings.LOG_LEVEL,
             "jwt_algorithm": settings.JWT_ALGORITHM,
             "access_token_expire_minutes": settings.access_token_expire_minutes,
-            "python_version": os.sys.version,
+            "python_version": sys.version,
         }
 
         return DebugResponse(

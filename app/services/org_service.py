@@ -1,4 +1,4 @@
-from typing import Optional, Dict, Any
+from typing import Optional
 import math
 import asyncio
 from datetime import datetime, timezone
@@ -26,11 +26,13 @@ logger = get_service_logger("organization")
 
 class OrganizationNotFoundError(Exception):
     """Organization not found error."""
+
     pass
 
 
 class OrganizationAlreadyExistsError(Exception):
     """Organization already exists error."""
+
     pass
 
 
@@ -82,7 +84,7 @@ class OrganizationService:
                 # Check if organization with same name already exists
                 stmt = select(OrganizationModel).where(
                     OrganizationModel.name == org_data.name,
-                    OrganizationModel.is_active == True
+                    OrganizationModel.is_active == True,
                 )
                 result = await session.execute(stmt)
                 existing = result.scalar_one_or_none()
@@ -101,7 +103,11 @@ class OrganizationService:
                     name=org_data.name,
                     domain=org_data.domain,
                     settings=org_data.settings or {},
-                    plan_type=org_data.plan_type.value if hasattr(org_data.plan_type, 'value') else org_data.plan_type,
+                    plan_type=(
+                        org_data.plan_type.value
+                        if hasattr(org_data.plan_type, "value")
+                        else org_data.plan_type
+                    ),
                     is_active=True,
                     created_at=now,
                     updated_at=now,
@@ -164,8 +170,7 @@ class OrganizationService:
         try:
             async with db.session() as session:
                 stmt = select(OrganizationModel).where(
-                    OrganizationModel.id == org_id,
-                    OrganizationModel.is_active == True
+                    OrganizationModel.id == org_id, OrganizationModel.is_active == True
                 )
                 result = await session.execute(stmt)
                 org_model = result.scalar_one_or_none()
@@ -219,8 +224,7 @@ class OrganizationService:
             async with db.session() as session:
                 # Get existing organization
                 stmt = select(OrganizationModel).where(
-                    OrganizationModel.id == org_id,
-                    OrganizationModel.is_active == True
+                    OrganizationModel.id == org_id, OrganizationModel.is_active == True
                 )
                 result = await session.execute(stmt)
                 org_model = result.scalar_one_or_none()
@@ -242,7 +246,7 @@ class OrganizationService:
                     name_check = select(OrganizationModel).where(
                         OrganizationModel.name == update_data.name,
                         OrganizationModel.id != org_id,
-                        OrganizationModel.is_active == True
+                        OrganizationModel.is_active == True,
                     )
                     name_result = await session.execute(name_check)
                     if name_result.scalar_one_or_none():
@@ -253,7 +257,7 @@ class OrganizationService:
                 # Update fields
                 update_fields = update_data.model_dump(exclude_unset=True)
                 for field, value in update_fields.items():
-                    if field == 'plan_type' and hasattr(value, 'value'):
+                    if field == "plan_type" and hasattr(value, "value"):
                         value = value.value
                     setattr(org_model, field, value)
 
@@ -329,22 +333,34 @@ class OrganizationService:
         try:
             async with db.session() as session:
                 # Build base query
-                stmt = select(OrganizationModel).where(OrganizationModel.is_active == True)
+                stmt = select(OrganizationModel).where(
+                    OrganizationModel.is_active == True
+                )
 
                 # Apply filters
                 if filters:
                     if filters.plan_type:
-                        plan_value = filters.plan_type.value if hasattr(filters.plan_type, 'value') else filters.plan_type
+                        plan_value = (
+                            filters.plan_type.value
+                            if hasattr(filters.plan_type, "value")
+                            else filters.plan_type
+                        )
                         stmt = stmt.where(OrganizationModel.plan_type == plan_value)
 
                     if filters.is_active is not None:
-                        stmt = stmt.where(OrganizationModel.is_active == filters.is_active)
+                        stmt = stmt.where(
+                            OrganizationModel.is_active == filters.is_active
+                        )
 
                     if filters.name:
-                        stmt = stmt.where(OrganizationModel.name.ilike(f"%{filters.name}%"))
+                        stmt = stmt.where(
+                            OrganizationModel.name.ilike(f"%{filters.name}%")
+                        )
 
                     if filters.domain:
-                        stmt = stmt.where(OrganizationModel.domain.ilike(f"%{filters.domain}%"))
+                        stmt = stmt.where(
+                            OrganizationModel.domain.ilike(f"%{filters.domain}%")
+                        )
 
                 # Get total count
                 count_stmt = select(func.count()).select_from(stmt.subquery())
@@ -413,8 +429,7 @@ class OrganizationService:
         try:
             async with db.session() as session:
                 stmt = select(OrganizationModel).where(
-                    OrganizationModel.id == org_id,
-                    OrganizationModel.is_active == True
+                    OrganizationModel.id == org_id, OrganizationModel.is_active == True
                 )
                 result = await session.execute(stmt)
                 org_model = result.scalar_one_or_none()
@@ -436,7 +451,9 @@ class OrganizationService:
                 org_model.updated_at = datetime.now(timezone.utc)
                 await session.flush()
 
-                self.logger.info("Organization deleted", org_id=org_id, name=org_model.name)
+                self.logger.info(
+                    "Organization deleted", org_id=org_id, name=org_model.name
+                )
 
                 # Audit logging (non-blocking)
                 asyncio.create_task(
@@ -481,8 +498,7 @@ class OrganizationService:
         try:
             async with db.session() as session:
                 stmt = select(OrganizationModel).where(
-                    OrganizationModel.name == name,
-                    OrganizationModel.is_active == True
+                    OrganizationModel.name == name, OrganizationModel.is_active == True
                 )
                 result = await session.execute(stmt)
                 org_model = result.scalar_one_or_none()

@@ -74,8 +74,14 @@ class AuditService:
                 audit_id = str(uuid4())
 
                 # Convert enums to string values
-                action_value = action.value if isinstance(action, AuditAction) else action
-                entity_type_value = entity_type.value if isinstance(entity_type, AuditEntityType) else entity_type
+                action_value = (
+                    action.value if isinstance(action, AuditAction) else action
+                )
+                entity_type_value = (
+                    entity_type.value
+                    if isinstance(entity_type, AuditEntityType)
+                    else entity_type
+                )
 
                 audit_log = AuditLogModel(
                     id=audit_id,
@@ -111,7 +117,11 @@ class AuditService:
                 "Failed to log audit event",
                 org_id=org_id,
                 action=action.value if isinstance(action, AuditAction) else action,
-                entity_type=entity_type.value if isinstance(entity_type, AuditEntityType) else entity_type,
+                entity_type=(
+                    entity_type.value
+                    if isinstance(entity_type, AuditEntityType)
+                    else entity_type
+                ),
                 entity_id=entity_id,
                 error=str(e),
             )
@@ -167,7 +177,11 @@ class AuditService:
 
                 # Apply filters
                 if entity_type:
-                    type_value = entity_type.value if isinstance(entity_type, AuditEntityType) else entity_type
+                    type_value = (
+                        entity_type.value
+                        if isinstance(entity_type, AuditEntityType)
+                        else entity_type
+                    )
                     stmt = stmt.where(AuditLogModel.entity_type == type_value)
 
                 if entity_id:
@@ -177,7 +191,9 @@ class AuditService:
                     stmt = stmt.where(AuditLogModel.user_id == user_id)
 
                 if action:
-                    action_value = action.value if isinstance(action, AuditAction) else action
+                    action_value = (
+                        action.value if isinstance(action, AuditAction) else action
+                    )
                     stmt = stmt.where(AuditLogModel.action == action_value)
 
                 if start_date:
@@ -239,15 +255,24 @@ class AuditService:
         """
         try:
             async with db.session() as session:
-                type_value = entity_type.value if isinstance(entity_type, AuditEntityType) else entity_type
+                type_value = (
+                    entity_type.value
+                    if isinstance(entity_type, AuditEntityType)
+                    else entity_type
+                )
 
-                stmt = select(AuditLogModel).where(
-                    and_(
-                        AuditLogModel.organization_id == org_id,
-                        AuditLogModel.entity_type == type_value,
-                        AuditLogModel.entity_id == entity_id,
+                stmt = (
+                    select(AuditLogModel)
+                    .where(
+                        and_(
+                            AuditLogModel.organization_id == org_id,
+                            AuditLogModel.entity_type == type_value,
+                            AuditLogModel.entity_id == entity_id,
+                        )
                     )
-                ).order_by(AuditLogModel.created_at.desc()).limit(limit)
+                    .order_by(AuditLogModel.created_at.desc())
+                    .limit(limit)
+                )
 
                 result = await session.execute(stmt)
                 audit_logs = result.scalars().all()

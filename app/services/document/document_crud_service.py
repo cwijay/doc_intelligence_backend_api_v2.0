@@ -142,10 +142,16 @@ class DocumentCrudService(DocumentBaseService):
                     folder_id=folder_id,
                 )
                 org_name = await self._get_organization_name(org_id)
-                folder_name = await self._get_folder_name(org_id, folder_id) if folder_id else None
+                folder_name = (
+                    await self._get_folder_name(org_id, folder_id)
+                    if folder_id
+                    else None
+                )
 
                 if folder_name:
-                    storage_path = f"{org_name}/original/{folder_name}/{sanitized_filename}"
+                    storage_path = (
+                        f"{org_name}/original/{folder_name}/{sanitized_filename}"
+                    )
                 else:
                     storage_path = f"{org_name}/original/root/{sanitized_filename}"
 
@@ -172,7 +178,11 @@ class DocumentCrudService(DocumentBaseService):
 
             # TWO-PHASE COMMIT
             now = datetime.now(timezone.utc)
-            status_value = DocumentStatus.UPLOADING.value if hasattr(DocumentStatus.UPLOADING, 'value') else DocumentStatus.UPLOADING
+            status_value = (
+                DocumentStatus.UPLOADING.value
+                if hasattr(DocumentStatus.UPLOADING, "value")
+                else DocumentStatus.UPLOADING
+            )
 
             async with self.db.session() as session:
                 # Phase 1: Create placeholder document in PostgreSQL
@@ -182,7 +192,9 @@ class DocumentCrudService(DocumentBaseService):
                     folder_id=folder_id,
                     filename=sanitized_filename,
                     original_filename=file.filename,
-                    file_type=file_type.value if hasattr(file_type, 'value') else file_type,
+                    file_type=(
+                        file_type.value if hasattr(file_type, "value") else file_type
+                    ),
                     file_size=actual_size,
                     storage_path=storage_path,
                     status=status_value,
@@ -228,7 +240,11 @@ class DocumentCrudService(DocumentBaseService):
                     raise DocumentUploadError(f"Failed to upload file to storage: {e}")
 
                 # Phase 3: Update PostgreSQL document status
-                uploaded_status = DocumentStatus.UPLOADED.value if hasattr(DocumentStatus.UPLOADED, 'value') else DocumentStatus.UPLOADED
+                uploaded_status = (
+                    DocumentStatus.UPLOADED.value
+                    if hasattr(DocumentStatus.UPLOADED, "value")
+                    else DocumentStatus.UPLOADED
+                )
                 doc_model.status = uploaded_status
                 doc_model.storage_path = actual_storage_path
                 doc_model.updated_at = datetime.now(timezone.utc)
@@ -255,7 +271,11 @@ class DocumentCrudService(DocumentBaseService):
                         details={
                             "filename": sanitized_filename,
                             "original_filename": file.filename,
-                            "file_type": file_type.value if hasattr(file_type, 'value') else file_type,
+                            "file_type": (
+                                file_type.value
+                                if hasattr(file_type, "value")
+                                else file_type
+                            ),
                             "file_size": actual_size,
                             "storage_path": actual_storage_path,
                             "folder_id": folder_id,
@@ -311,7 +331,7 @@ class DocumentCrudService(DocumentBaseService):
                 stmt = select(DocumentModel).where(
                     DocumentModel.id == document_id,
                     DocumentModel.organization_id == org_id,
-                    DocumentModel.is_active == True
+                    DocumentModel.is_active == True,
                 )
                 result = await session.execute(stmt)
                 doc_model = result.scalar_one_or_none()
@@ -383,7 +403,7 @@ class DocumentCrudService(DocumentBaseService):
                 stmt = select(DocumentModel).where(
                     DocumentModel.id == document_id,
                     DocumentModel.organization_id == org_id,
-                    DocumentModel.is_active == True
+                    DocumentModel.is_active == True,
                 )
                 result = await session.execute(stmt)
                 doc_model = result.scalar_one_or_none()
@@ -394,7 +414,9 @@ class DocumentCrudService(DocumentBaseService):
                     )
 
                 old_status = doc_model.status
-                status_value = new_status.value if hasattr(new_status, 'value') else new_status
+                status_value = (
+                    new_status.value if hasattr(new_status, "value") else new_status
+                )
                 doc_model.status = status_value
                 doc_model.updated_at = datetime.now(timezone.utc)
 
@@ -476,7 +498,7 @@ class DocumentCrudService(DocumentBaseService):
                 stmt = select(DocumentModel).where(
                     DocumentModel.id == document_id,
                     DocumentModel.organization_id == org_id,
-                    DocumentModel.is_active == True
+                    DocumentModel.is_active == True,
                 )
                 result = await session.execute(stmt)
                 doc_model = result.scalar_one_or_none()
@@ -490,7 +512,11 @@ class DocumentCrudService(DocumentBaseService):
                 storage_path = doc_model.storage_path
 
                 # Soft delete
-                deleted_status = DocumentStatus.DELETED.value if hasattr(DocumentStatus.DELETED, 'value') else DocumentStatus.DELETED
+                deleted_status = (
+                    DocumentStatus.DELETED.value
+                    if hasattr(DocumentStatus.DELETED, "value")
+                    else DocumentStatus.DELETED
+                )
                 doc_model.is_active = False
                 doc_model.status = deleted_status
                 doc_model.updated_at = datetime.now(timezone.utc)

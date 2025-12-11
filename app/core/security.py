@@ -361,12 +361,36 @@ def validate_password_strength(password: str) -> tuple[bool, str]:
 
     # Check for common patterns - expanded list based on OWASP guidelines
     common_passwords = {
-        "password", "12345678", "qwerty123", "password123", "admin123",
-        "letmein1", "welcome1", "monkey12", "dragon12", "master12",
-        "abc12345", "trustno1", "iloveyou", "sunshine", "princess",
-        "football", "baseball", "superman", "michael1", "shadow12",
-        "passw0rd", "p@ssword", "p@ssw0rd", "password1", "qwertyui",
-        "asdfghjk", "zxcvbnm1", "123456ab", "abcd1234", "1234abcd",
+        "password",
+        "12345678",
+        "qwerty123",
+        "password123",
+        "admin123",
+        "letmein1",
+        "welcome1",
+        "monkey12",
+        "dragon12",
+        "master12",
+        "abc12345",
+        "trustno1",
+        "iloveyou",
+        "sunshine",
+        "princess",
+        "football",
+        "baseball",
+        "superman",
+        "michael1",
+        "shadow12",
+        "passw0rd",
+        "p@ssword",
+        "p@ssw0rd",
+        "password1",
+        "qwertyui",
+        "asdfghjk",
+        "zxcvbnm1",
+        "123456ab",
+        "abcd1234",
+        "1234abcd",
     }
     if password.lower() in common_passwords:
         return False, "Password is too common"
@@ -706,7 +730,9 @@ def verify_token_detailed(
         Tuple of (decoded token data or None, validation result)
     """
     try:
-        payload = jwt.decode(token, settings.JWT_SECRET_KEY, algorithms=[settings.JWT_ALGORITHM])
+        payload = jwt.decode(
+            token, settings.JWT_SECRET_KEY, algorithms=[settings.JWT_ALGORITHM]
+        )
         logger.debug(
             "Token verified successfully",
             user_id=payload.get("sub"),
@@ -791,7 +817,9 @@ def generate_invitation_token(
     expire = datetime.now(timezone.utc) + timedelta(hours=expires_hours)
     data.update({"exp": expire, "iat": datetime.now(timezone.utc)})
 
-    encoded_jwt = jwt.encode(data, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
+    encoded_jwt = jwt.encode(
+        data, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM
+    )
     return encoded_jwt
 
 
@@ -806,7 +834,9 @@ def verify_invitation_token(token: str) -> Optional[Dict[str, Any]]:
         Token data or None if invalid/expired
     """
     try:
-        payload = jwt.decode(token, settings.JWT_SECRET_KEY, algorithms=[settings.JWT_ALGORITHM])
+        payload = jwt.decode(
+            token, settings.JWT_SECRET_KEY, algorithms=[settings.JWT_ALGORITHM]
+        )
         if payload.get("type") != "invitation":
             logger.debug("Token verification failed: not an invitation token")
             return None
