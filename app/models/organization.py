@@ -11,6 +11,7 @@ class PlanType(str, Enum):
     FREE = "free"
     STARTER = "starter"
     PRO = "pro"
+    BUSINESS = "business"
 
 
 class Organization(BaseModel):
@@ -31,6 +32,17 @@ class Organization(BaseModel):
     # Plan type
     plan_type: PlanType = Field(
         default=PlanType.FREE, description="Organization plan type"
+    )
+
+    # Subscription reference (for usage tracking)
+    plan_id: Optional[str] = Field(
+        None, description="Subscription plan ID (FK to subscription_plans)"
+    )
+
+    # Subscription status
+    subscription_status: str = Field(
+        default="active",
+        description="Subscription status (active, past_due, canceled, trialing)",
     )
 
     # Status
@@ -90,12 +102,17 @@ class Organization(BaseModel):
     @property
     def is_premium(self) -> bool:
         """Check if organization has premium plan."""
-        return self.plan_type in [PlanType.STARTER, PlanType.PRO]
+        return self.plan_type in [PlanType.STARTER, PlanType.PRO, PlanType.BUSINESS]
 
     @property
     def is_pro(self) -> bool:
         """Check if organization has pro plan."""
         return self.plan_type == PlanType.PRO
+
+    @property
+    def is_business(self) -> bool:
+        """Check if organization has business plan."""
+        return self.plan_type == PlanType.BUSINESS
 
     def update_timestamp(self):
         """Update the updated_at timestamp."""

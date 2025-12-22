@@ -13,6 +13,7 @@ class DocumentStatus(str, Enum):
     UPLOADING = "uploading"  # File upload in progress (sync prevention status)
     UPLOADED = "uploaded"
     FAILED = "failed"
+    DELETED = "deleted"
 
 
 class FileType(str, Enum):
@@ -20,6 +21,17 @@ class FileType(str, Enum):
 
     PDF = "pdf"
     XLSX = "xlsx"
+    CSV = "csv"
+    JPEG = "jpeg"
+    PNG = "png"
+    DOCX = "docx"
+    DOC = "doc"
+    PPTX = "pptx"
+    PPT = "ppt"
+    TXT = "txt"
+    GIF = "gif"
+    WEBP = "webp"
+    TIFF = "tiff"
 
 
 class Document(BaseModel):
@@ -52,6 +64,19 @@ class Document(BaseModel):
         default_factory=dict, description="Document metadata and processing info"
     )
 
+    # Content hash for deduplication and cache lookup
+    file_hash: Optional[str] = Field(
+        None, description="SHA-256 hash of file content (for deduplication)"
+    )
+
+    # Parsed document fields (for AI processing)
+    parsed_path: Optional[str] = Field(
+        None, description="GCS path to parsed markdown version"
+    )
+    parsed_at: Optional[datetime] = Field(
+        None, description="When document was parsed to markdown"
+    )
+
     # Status tracking
     is_active: bool = Field(
         default=True, description="Whether document is active (for soft delete)"
@@ -72,7 +97,7 @@ class Document(BaseModel):
         validate_assignment=True,
     )
 
-    @field_serializer("created_at", "updated_at")
+    @field_serializer("created_at", "updated_at", "parsed_at")
     def serialize_datetime(self, value: datetime) -> Optional[str]:
         """Serialize datetime fields to ISO format."""
         return value.isoformat() if value else None
@@ -203,6 +228,16 @@ class Document(BaseModel):
                     elif clean_data[field] is None:
                         # Handle null datetime values
                         clean_data[field] = datetime.now(timezone.utc)
+
+            # Handle parsed_at datetime (optional field, can remain None)
+            if "parsed_at" in clean_data and clean_data["parsed_at"] is not None:
+                if isinstance(clean_data["parsed_at"], str):
+                    try:
+                        clean_data["parsed_at"] = datetime.fromisoformat(
+                            clean_data["parsed_at"]
+                        )
+                    except ValueError:
+                        clean_data["parsed_at"] = None
 
             # Ensure required fields have proper defaults
             if "file_size" in clean_data and (
@@ -346,6 +381,11 @@ class Document(BaseModel):
         return self.status == DocumentStatus.FAILED
 
     @property
+    def is_parsed(self) -> bool:
+        """Check if document has been parsed to markdown."""
+        return self.parsed_path is not None and self.parsed_at is not None
+
+    @property
     def file_extension(self) -> str:
         """Get file extension from filename."""
         if "." in self.filename:
@@ -434,12 +474,26 @@ class Document(BaseModel):
 
         extension = filename.split(".")[-1].lower() if "." in filename else ""
 
-        if extension == "pdf":
-            return FileType.PDF
-        elif extension in ["xlsx", "xls"]:
-            return FileType.XLSX
+        extension_map = {
+            "pdf": FileType.PDF,
+            "xlsx": FileType.XLSX,
+            "xls": FileType.XLSX,
+            "csv": FileType.CSV,
+            "jpg": FileType.JPEG,
+            "jpeg": FileType.JPEG,
+            "png": FileType.PNG,
+            "docx": FileType.DOCX,
+            "doc": FileType.DOC,
+            "pptx": FileType.PPTX,
+            "ppt": FileType.PPT,
+            "txt": FileType.TXT,
+            "gif": FileType.GIF,
+            "webp": FileType.WEBP,
+            "tiff": FileType.TIFF,
+            "tif": FileType.TIFF,
+        }
 
-        return None
+        return extension_map.get(extension)
 
     @staticmethod
     def is_supported_file_type(filename: str) -> bool:

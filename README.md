@@ -20,15 +20,14 @@ A **document management platform** built with FastAPI and PostgreSQL, featuring 
 - [Technology Stack](#technology-stack)
 - [Prerequisites](#prerequisites)
 - [Installation](#installation)
-- [GCP Resource Provisioning](#gcp-resource-provisioning)
+- [GCP Setup](#gcp-setup)
 - [Environment Configuration](#environment-configuration)
-- [Database Setup](#database-setup)
-- [Cloud Storage Setup](#cloud-storage-setup)
 - [Development Server](#development-server)
 - [API Endpoints](#api-endpoints)
 - [Audit Logging](#audit-logging)
 - [Deployment](#deployment)
 - [Project Structure](#project-structure)
+- [Testing](#testing)
 - [Troubleshooting](#troubleshooting)
 
 ## Architecture Overview
@@ -38,25 +37,27 @@ The system follows a **clean architecture** with service composition patterns:
 - **Core Layer**: Configuration, clients (Database, GCS), security, logging, exceptions
 - **Service Layer**: Business logic with Facade pattern for document operations
 - **API Layer**: FastAPI routers with dependency injection and session-based auth
-- **Models Layer**: Pydantic v2 models and SQLAlchemy ORM models
+- **Models Layer**: Pydantic v2 models (local) and SQLAlchemy ORM models (from `biz2bricks_core`)
+  - **Plan Types**: FREE, STARTER, PRO, BUSINESS (with usage limits)
+  - **Document Fields**: file_hash, parsed_path, parsed_at (for AI processing)
 
 ### Document Service Architecture
 
-The document processing system uses a **Facade Pattern** with specialized services:
+The document processing system uses a **Facade Pattern** with 5 specialized services:
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                    DocumentService (Facade)                 │
-├─────────────────────────────────────────────────────────────┤
-│ ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐ │
-│ │  Validation     │  │    Storage      │  │     CRUD        │ │
-│ │   Service       │  │    Service      │  │    Service      │ │
-│ └─────────────────┘  └─────────────────┘  └─────────────────┘ │
-│ ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐ │
-│ │     Query       │  │     Sync        │  │   Download      │ │
-│ │    Service      │  │    Service      │  │    Service      │ │
-│ └─────────────────┘  └─────────────────┘  └─────────────────┘ │
-└─────────────────────────────────────────────────────────────────┘
+┌───────────────────────────────────────────────────────────────────┐
+│                    DocumentService (Facade)                       │
+├───────────────────────────────────────────────────────────────────┤
+│ ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐     │
+│ │  Validation     │  │    Storage      │  │     CRUD        │     │
+│ │   Service       │  │    Service      │  │    Service      │     │
+│ └─────────────────┘  └─────────────────┘  └─────────────────┘     │
+│ ┌─────────────────┐  ┌─────────────────┐                          │
+│ │     Query       │  │   Download      │                          │
+│ │    Service      │  │    Service      │                          │
+│ └─────────────────┘  └─────────────────┘                          │
+└───────────────────────────────────────────────────────────────────┘
                               │
                               ▼
 ┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
@@ -76,7 +77,9 @@ The document processing system uses a **Facade Pattern** with specialized servic
 ### Core Infrastructure
 - **Backend**: FastAPI 0.124.0 with async/await
 - **Database**: PostgreSQL via Cloud SQL with SQLAlchemy 2.0 async
+- **Shared Core**: `biz2bricks_core` package ([GitHub](https://github.com/cwijay/biz_to_bricks_core_v1.git)) - SQLAlchemy ORM models (User, Organization, Folder, Document, AuditLog), database utilities, usage tracking
 - **File Storage**: Google Cloud Storage with signed URLs
+- **Caching**: fastapi-cache2 with memory/Redis backends
 - **Authentication**: Session-based JWT with refresh token rotation
 - **Dependency Management**: uv (ultra-fast Python package installer)
 - **Deployment**: Google Cloud Run
@@ -120,73 +123,233 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-## GCP Resource Provisioning
+## GCP Setup
 
-Automated scripts to provision all required GCP resources for deployment.
+This section covers all GCP resource creation - from authentication to database tables.
 
-### Quick Start (Interactive)
+### Prerequisites
+
+1. **Google Cloud SDK** installed and authenticated
+2. **GCP Project** with billing enabled
+3. **Required APIs** enabled
 
 ```bash
-# Complete GCP setup with prompts
+# Install gcloud CLI (macOS)
+brew install google-cloud-sdk
+
+# Login to Google Cloud
+gcloud auth login
+
+# Set up Application Default Credentials (required for Cloud SQL, GCS)
+gcloud auth application-default login
+
+# Set your project
+gcloud config set project YOUR_PROJECT_ID
+
+# Enable required APIs
+gcloud services enable \
+  run.googleapis.com \
+  sqladmin.googleapis.com \
+  storage.googleapis.com \
+  secretmanager.googleapis.com \
+  iam.googleapis.com
+```
+
+### Quick Start (Automated)
+
+The fastest way to set up all GCP resources:
+
+```bash
+# Full setup: provision + init tables + generate .env (RECOMMENDED)
+uv run python scripts/provision_all.py --full-setup --env-file .env.production
+
+# Provision GCP resources only (Cloud SQL, GCS bucket, service account, secrets)
+uv run python scripts/provision_all.py --env-file .env.production
+
+# Preview what will be created (dry-run)
+uv run python scripts/provision_all.py --full-setup --dry-run
+
+# Provision + initialize database tables
+uv run python scripts/provision_all.py --init-tables --env-file .env.production
+
+# Provision + generate .env file from resources
+uv run python scripts/provision_all.py --generate-env --env-output .env
+```
+
+The script is **idempotent** - it only creates missing resources. Output shows:
+- `EXISTS ✓` - Resource already exists
+- `CREATED ✓` - Resource was created
+- `MISSING ✗` - Resource doesn't exist
+
+### Resources Created
+
+| Resource | Description | Script |
+|----------|-------------|--------|
+| Cloud SQL Instance | PostgreSQL 15 database | `scripts/setup_cloud_sql.py` |
+| Database | `doc_intelligence` database | `scripts/setup_cloud_sql.py` |
+| Database User | `postgres` user with password | `scripts/setup_cloud_sql.py` |
+| GCS Bucket | Document storage with versioning | `setup_gcp_bucket.py` |
+| Service Account | IAM roles for Cloud Run | `scripts/setup_service_account.py` |
+| Secrets | `DATABASE_PASSWORD`, `JWT_SECRET_KEY` | `scripts/setup_secrets.py` |
+| Database Tables | All application tables | `scripts/init_database.py` |
+
+### Manual Setup (Step-by-Step)
+
+If you prefer manual control or the automated script fails:
+
+#### Step 1: Create Cloud SQL Instance
+
+```bash
+# Using the interactive script (recommended)
+uv run python scripts/setup_cloud_sql.py
+
+# OR manually via gcloud (takes 5-10 minutes)
+gcloud sql instances create doc-intelligence-db \
+  --database-version=POSTGRES_15 \
+  --tier=db-f1-micro \
+  --region=us-central1 \
+  --assign-ip
+
+# Create database
+gcloud sql databases create doc_intelligence \
+  --instance=doc-intelligence-db
+
+# Set postgres password
+gcloud sql users set-password postgres \
+  --instance=doc-intelligence-db \
+  --password=YOUR_SECURE_PASSWORD
+```
+
+#### Step 2: Create GCS Bucket
+
+```bash
+# Using the interactive script (recommended)
+python setup_gcp_bucket.py
+
+# OR manually via gsutil
+gsutil mb -p YOUR_PROJECT_ID -c STANDARD -l us-central1 gs://YOUR_BUCKET_NAME
+gsutil versioning set on gs://YOUR_BUCKET_NAME
+gsutil uniformbucketlevelaccess set on gs://YOUR_BUCKET_NAME
+```
+
+#### Step 3: Create Service Account & IAM
+
+```bash
+# Using the script
+uv run python scripts/setup_service_account.py create
+
+# OR manually
+gcloud iam service-accounts create document-intelligence-api-sa \
+  --display-name="Document Intelligence API"
+
+# Grant required roles
+SA_EMAIL="document-intelligence-api-sa@YOUR_PROJECT.iam.gserviceaccount.com"
+for role in roles/cloudsql.client roles/storage.objectAdmin roles/logging.logWriter; do
+  gcloud projects add-iam-policy-binding YOUR_PROJECT_ID \
+    --member="serviceAccount:$SA_EMAIL" \
+    --role="$role"
+done
+```
+
+#### Step 4: Create Secrets
+
+```bash
+# Using the script
+uv run python scripts/setup_secrets.py create
+
+# OR manually
+echo -n "YOUR_DB_PASSWORD" | gcloud secrets create DATABASE_PASSWORD --data-file=-
+echo -n "YOUR_JWT_SECRET" | gcloud secrets create JWT_SECRET_KEY --data-file=-
+```
+
+#### Step 5: Initialize Database Tables
+
+```bash
+# Create all tables
+uv run python scripts/init_database.py
+
+# Verify tables were created
+uv run python scripts/init_database.py status
+```
+
+### Cloud SQL Connection
+
+The application uses the **Cloud SQL Python Connector** for secure database access:
+
+| Setting | Local Development | Cloud Run |
+|---------|-------------------|-----------|
+| `USE_CLOUD_SQL_CONNECTOR` | `true` | `true` |
+| `CLOUD_SQL_IP_TYPE` | `PUBLIC` | `PUBLIC` (or `PRIVATE` with VPC) |
+
+**Security Benefits:**
+- No IP whitelisting required
+- IAM-based authentication
+- Encrypted connections automatically
+
+### Delete Resources
+
+**Warning**: Destructive operations - will delete all data!
+
+```bash
+# Delete all and recreate
+uv run python scripts/provision_all.py --delete
+
+# Delete only (don't recreate)
+uv run python scripts/provision_all.py --delete-only
+
+# Skip confirmation (for CI/CD)
+uv run python scripts/provision_all.py --delete --force
+
+# Delete specific resources only
+uv run python scripts/provision_all.py --delete --skip-bucket --skip-secrets
+```
+
+### Verify Setup
+
+```bash
+# Check all resources exist
 uv run python scripts/provision_all.py
+
+# Test database connection
+uv run python scripts/init_database.py status
+
+# Test GCS access
+gsutil ls gs://YOUR_BUCKET_NAME
+
+# Start the server and check health
+./deploy.sh --dev
+curl http://127.0.0.1:8000/status
 ```
 
-This master script orchestrates:
-1. Service Account creation with IAM roles
-2. Cloud SQL PostgreSQL instance, database, and user
-3. GCS bucket with versioning
-4. Secret Manager secrets (DATABASE_PASSWORD, JWT_SECRET_KEY, REFRESH_SECRET_KEY)
-5. Database table initialization
-6. Environment file generation
-
-### CI/CD (Non-Interactive)
-
-```bash
-# Provision using config file
-uv run python scripts/provision_all.py \
-  --config scripts/provision_config.yaml \
-  --non-interactive \
-  --output-env .env.production
+Expected health response:
+```json
+{
+  "application": {"status": "healthy"},
+  "services": {
+    "postgresql": {"status": "connected"}
+  }
+}
 ```
 
-### Individual Scripts
+### Individual Scripts Reference
 
 | Script | Purpose | Usage |
 |--------|---------|-------|
-| `scripts/provision_all.py` | Master orchestration | `uv run python scripts/provision_all.py` |
-| `scripts/setup_service_account.py` | Service account + IAM | `uv run python scripts/setup_service_account.py create` |
+| `scripts/provision_all.py` | Master orchestration (full setup) | `uv run python scripts/provision_all.py --full-setup` |
 | `scripts/setup_cloud_sql.py` | Cloud SQL instance | `uv run python scripts/setup_cloud_sql.py` |
-| `scripts/setup_secrets.py` | Secret Manager | `uv run python scripts/setup_secrets.py create` |
-| `scripts/generate_env.py` | Generate .env files | `uv run python scripts/generate_env.py --env production` |
 | `setup_gcp_bucket.py` | GCS bucket | `python setup_gcp_bucket.py` |
+| `scripts/setup_service_account.py` | Service account + IAM | `uv run python scripts/setup_service_account.py create` |
+| `scripts/setup_secrets.py` | Secret Manager | `uv run python scripts/setup_secrets.py create` |
 | `scripts/init_database.py` | Database tables | `uv run python scripts/init_database.py` |
+| `scripts/generate_env.py` | Generate .env files | `uv run python scripts/generate_env.py --env production` |
 
-### Configuration File
-
-Copy and customize `scripts/provision_config.yaml` for your environment:
-
-```yaml
-project_id: "your-project-id"
-region: "us-central1"
-
-cloud_sql:
-  instance_name: "doc-intelligence-db"
-  tier: "db-f1-micro"  # or db-custom-1-3840 for production
-  database_name: "doc_intelligence"
-
-storage:
-  bucket_name: "${project_id}-document-store"
-
-service_account:
-  name: "document-intelligence-api-sa"
-  roles:
-    - "roles/cloudsql.client"
-    - "roles/storage.objectAdmin"
-    - "roles/secretmanager.secretAccessor"
-
-secrets:
-  use_secret_manager: true
-```
+**provision_all.py flags**:
+- `--full-setup` - Run complete setup (provision + init-tables + generate-env)
+- `--init-tables` - Initialize database tables after provisioning
+- `--generate-env` - Generate .env file from provisioned resources
+- `--env-output FILE` - Output path for generated .env file (default: .env)
+- `--dry-run` - Preview actions without executing
+- `--skip-cloudsql`, `--skip-bucket`, etc. - Skip specific steps
 
 ## Environment Configuration
 
@@ -203,31 +366,22 @@ LOG_FORMAT="json"
 # PostgreSQL Cloud SQL Configuration
 # =============================================================================
 # Instance connection name: <project>:<region>:<instance>
-CLOUD_SQL_INSTANCE=biz2bricks-dev-v1:us-central1:biz-2-bricks-intelli-doc-dev
-DATABASE_NAME=biz-2-bricks-intelli-doc-dev
-DATABASE_USER=postgres
-DATABASE_PASSWORD=&e<IK7kq0)N2J/nt
+CLOUD_SQL_INSTANCE="your-project:us-central1:your-instance"
+DATABASE_NAME="doc_intelligence"
+DATABASE_USER="postgres"
+DATABASE_PASSWORD="your-secure-password"
 
-# Use direct connection for local development (bypass Cloud SQL connector)
+# Use Cloud SQL Connector (recommended)
 USE_CLOUD_SQL_CONNECTOR=true
 
 # Cloud SQL IP type: PUBLIC for local dev, PRIVATE for production (in VPC)
 CLOUD_SQL_IP_TYPE=PUBLIC
 
-# Direct PostgreSQL connection URL - update PUBLIC_IP with your Cloud SQL public IP
-# NOTE: Password is URL-encoded (&=%26, <=%3C, )=%29, /=%2F)
-DATABASE_URL=postgresql+asyncpg://postgres:%26e%3CIK7kq0%29N2J%2Fnt@136.112.54.69:5432/biz-2-bricks-intelli-doc-dev
-
-# # PostgreSQL - Local Development
+# PostgreSQL - Local Development (alternative)
 # DATABASE_URL="postgresql+asyncpg://postgres:password@localhost:5432/doc_intelligence"
 # USE_CLOUD_SQL_CONNECTOR=false
 
-# PostgreSQL - Production (Cloud SQL)
-# DATABASE_NAME="doc_intelligence"
-# DATABASE_USER="postgres"
-# DATABASE_PASSWORD="your-secure-password"
-# CLOUD_SQL_INSTANCE="project:region:instance"
-# USE_CLOUD_SQL_CONNECTOR=true
+# PostgreSQL - Production (Cloud SQL with VPC)
 # CLOUD_SQL_IP_TYPE="PRIVATE"
 
 # Connection Pool Settings
@@ -262,308 +416,54 @@ SIGNED_URL_EXPIRATION_MINUTES=60
 # Leave GOOGLE_APPLICATION_CREDENTIALS unset
 ```
 
-## Database Setup
+### Cache Configuration
 
-### Local Development with PostgreSQL
+The API includes an optional caching layer for improved performance:
 
-1. **Start PostgreSQL** (Docker or native):
 ```bash
-# Using Docker
+# Enable/disable caching (default: true)
+CACHE_ENABLED=true
+
+# Backend: "memory" (default) or "redis" (GCP Memorystore)
+CACHE_BACKEND=memory
+
+# Default TTL in seconds (default: 300)
+CACHE_DEFAULT_TTL=300
+
+# Redis configuration (optional - for production)
+REDIS_HOST=localhost
+REDIS_PORT=6379
+REDIS_PASSWORD=  # optional
+REDIS_DB=0
+
+# TTL settings per entity type (seconds)
+CACHE_DOCUMENT_TTL=120   # 2 minutes
+CACHE_FOLDER_TTL=300     # 5 minutes
+CACHE_ORG_TTL=1800       # 30 minutes
+CACHE_USER_TTL=300       # 5 minutes
+```
+
+**Note**: The cache automatically falls back to memory backend if Redis is unavailable.
+
+### Local Development with Docker PostgreSQL
+
+For local development without Cloud SQL:
+
+```bash
+# Start PostgreSQL via Docker
 docker run -d \
   --name postgres-dev \
   -e POSTGRES_PASSWORD=password \
   -e POSTGRES_DB=doc_intelligence \
   -p 5432:5432 \
   postgres:15
-```
 
-2. **Configure environment**:
-```bash
+# Configure .env for local database
 DATABASE_URL="postgresql+asyncpg://postgres:password@localhost:5432/doc_intelligence"
 USE_CLOUD_SQL_CONNECTOR=false
-```
 
-3. **Initialize tables**:
-```bash
+# Initialize tables
 uv run python scripts/init_database.py
-```
-
-4. **Verify setup**:
-```bash
-uv run python scripts/init_database.py status
-```
-
-### Production with Cloud SQL
-
-1. Create Cloud SQL instance via GCP Console or `deploy.sh`
-2. Configure `.env.production`:
-```bash
-DATABASE_NAME="doc_intelligence"
-DATABASE_USER="postgres"
-DATABASE_PASSWORD="secure-password"
-CLOUD_SQL_INSTANCE="project:region:instance"
-USE_CLOUD_SQL_CONNECTOR=true
-```
-
-## Local Development with Cloud Resources
-
-This section guides you through running the application locally while connecting to cloud resources (Cloud SQL and GCS bucket).
-
-### Prerequisites
-
-1. **Google Cloud SDK** installed and authenticated:
-```bash
-# Install gcloud CLI (if not installed)
-# macOS
-brew install google-cloud-sdk
-
-# Login to your Google Cloud account
-gcloud auth login
-
-# Set up Application Default Credentials (for Python SDK - Cloud SQL, GCS)
-gcloud auth application-default login
-
-# Set your active project
-gcloud config set project YOUR_PROJECT_ID
-
-# Verify your configuration
-gcloud config list
-
-# Check authentication status
-gcloud auth list
-```
-
-2. **Required GCP APIs** enabled:
-```bash
-gcloud services enable sqladmin.googleapis.com
-gcloud services enable storage.googleapis.com
-```
-
-### Step 1: Create Cloud SQL Instance
-
-Use the automated setup script:
-```bash
-uv run python scripts/setup_cloud_sql.py
-```
-
-This interactive script will:
-- Create a Cloud SQL PostgreSQL 15 instance
-- Create the database
-- Create the database user
-- Output the configuration for your `.env` file
-
-**Manual creation** (if preferred):
-```bash
-# Create instance (takes 5-10 minutes)
-# NOTE: No --authorized-networks flag - use Cloud SQL Connector for secure access
-gcloud sql instances create doc-intelligence-db \
-  --database-version=POSTGRES_15 \
-  --tier=db-f1-micro \
-  --region=us-central1 \
-  --assign-ip
-
-# Create database
-gcloud sql databases create doc_intelligence \
-  --instance=doc-intelligence-db
-
-# Set postgres user password
-gcloud sql users set-password postgres \
-  --instance=doc-intelligence-db \
-  --password=YOUR_SECURE_PASSWORD
-```
-
-### Cloud SQL Connection Methods
-
-This application uses the **Cloud SQL Python Connector** for secure database access. This approach:
-- **No IP whitelisting needed** - Authenticates via IAM credentials
-- **Encrypted connections** - All traffic is encrypted automatically
-- **Works everywhere** - Same method for local dev and production
-
-**Local Development Setup:**
-```bash
-# 1. Authenticate with Google Cloud
-gcloud auth application-default login
-
-# 2. Set environment variables in .env
-USE_CLOUD_SQL_CONNECTOR=true
-CLOUD_SQL_IP_TYPE=PUBLIC  # Use PUBLIC for local development
-```
-
-**Production (Cloud Run):**
-```bash
-# Environment variables
-USE_CLOUD_SQL_CONNECTOR=true
-CLOUD_SQL_IP_TYPE=PRIVATE  # Use PRIVATE for Cloud Run (VPC)
-```
-
-**Security Note:** The Cloud SQL instance has no authorized networks configured. All access must go through the Cloud SQL Connector, which authenticates via:
-- Application Default Credentials (local development)
-- Service Account (Cloud Run / production)
-
-### Step 2: Create GCS Bucket
-
-Use the automated setup script:
-```bash
-python setup_gcp_bucket.py
-```
-
-**Manual creation**:
-```bash
-# Create bucket
-gsutil mb -p YOUR_PROJECT_ID -c STANDARD -l us-central1 gs://YOUR_BUCKET_NAME
-
-# Enable versioning
-gsutil versioning set on gs://YOUR_BUCKET_NAME
-```
-
-### Step 3: Configure Environment
-
-Create your `.env` file with cloud resource configuration:
-```bash
-# Application Settings
-ENVIRONMENT="development"
-DEBUG=true
-LOG_LEVEL="INFO"
-LOG_FORMAT="text"
-
-# =============================================================================
-# PostgreSQL Cloud SQL Configuration
-# =============================================================================
-# Instance connection name: <project>:<region>:<instance>
-CLOUD_SQL_INSTANCE=your-project:us-central1:doc-intelligence-db
-DATABASE_NAME=doc_intelligence
-DATABASE_USER=postgres
-DATABASE_PASSWORD=your-secure-password
-
-# Use Cloud SQL connector (set to true for Cloud Run, can be true or false for local)
-USE_CLOUD_SQL_CONNECTOR=true
-
-# Cloud SQL IP type: PUBLIC for local dev, PRIVATE for production (in VPC)
-CLOUD_SQL_IP_TYPE=PUBLIC
-
-# Direct PostgreSQL connection URL (alternative to Cloud SQL connector)
-# NOTE: URL-encode special characters in password: & = %26, < = %3C, > = %3E, etc.
-# DATABASE_URL=postgresql+asyncpg://postgres:password@PUBLIC_IP:5432/doc_intelligence
-
-# =============================================================================
-# Google Cloud Storage Configuration
-# =============================================================================
-GCP_PROJECT_ID=your-project-id
-GCS_BUCKET_NAME=your-bucket-name
-
-# =============================================================================
-# Authentication
-# =============================================================================
-JWT_SECRET_KEY=your-256-bit-secret-key-here
-
-# =============================================================================
-# GCP Authentication (for local development)
-# =============================================================================
-# Option 1: Use Application Default Credentials (recommended)
-# Run: gcloud auth application-default login
-
-# Option 2: Service Account Key File
-# GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-account.json
-```
-
-### Step 4: Initialize Database Tables
-
-```bash
-uv run python scripts/init_database.py
-```
-
-Verify the tables were created:
-```bash
-uv run python scripts/init_database.py status
-```
-
-### Step 5: Start the Development Server
-
-```bash
-./deploy.sh --dev
-```
-
-Or manually:
-```bash
-uv run uvicorn app.main:app --reload --reload-dir app --host 127.0.0.1 --port 8000
-```
-
-### Step 6: Verify Connection
-
-Check the health endpoint:
-```bash
-curl http://127.0.0.1:8000/status
-```
-
-Expected response:
-```json
-{
-  "application": {
-    "name": "Document Intelligence API",
-    "version": "1.0.0",
-    "environment": "development",
-    "status": "healthy"
-  },
-  "services": {
-    "postgresql": {"status": "connected"},
-    "gcs": {"status": "connected"}
-  }
-}
-```
-
-### Security Notes
-
-The Cloud SQL instance uses the **Cloud SQL Python Connector** for all access - no IP whitelisting required. This is the recommended secure approach:
-
-1. **No authorized networks** - Instance doesn't accept direct IP connections
-2. **IAM-based authentication** - Uses Application Default Credentials or Service Account
-3. **Encrypted connections** - All traffic encrypted automatically
-4. Never commit `.env` files with credentials
-
-### Troubleshooting
-
-**Cannot connect to Cloud SQL:**
-```bash
-# Check instance is running
-gcloud sql instances describe doc-intelligence-db --format="value(state)"
-
-# Verify you're authenticated
-gcloud auth application-default login
-
-# Check Cloud SQL Connector is enabled in .env
-USE_CLOUD_SQL_CONNECTOR=true
-CLOUD_SQL_IP_TYPE=PUBLIC  # For local development
-```
-
-**GCS permission denied:**
-```bash
-# Ensure you're authenticated
-gcloud auth application-default login
-
-# Check bucket exists
-gsutil ls gs://YOUR_BUCKET_NAME
-```
-
-## Cloud Storage Setup
-
-### Automated Setup
-
-```bash
-python setup_gcp_bucket.py
-```
-
-This interactive script will:
-- Create the GCS bucket with optimal settings
-- Configure CORS for direct client uploads
-- Set up lifecycle policies
-- Test upload/download functionality
-
-### Manual Setup
-
-```bash
-gsutil mb -p your-project-id -c STANDARD -l us-central1 gs://your-bucket-name
-gsutil cors set cors.json gs://your-bucket-name
-gsutil uniformbucketlevelaccess set on gs://your-bucket-name
 ```
 
 ## Development Server
@@ -681,20 +581,27 @@ The system includes comprehensive audit logging for compliance and debugging.
 | Organization | CREATE, UPDATE, DELETE |
 | User | CREATE, UPDATE, DELETE, LOGIN, LOGOUT |
 | Folder | CREATE, DELETE, MOVE |
-| Document | UPLOAD, UPDATE, DELETE |
+| Document | CREATE, UPDATE, DELETE, UPLOAD, DOWNLOAD, MOVE |
 
 ### Audit Log Structure
 
 Each audit log entry contains:
 - **Organization ID**: Multi-tenant isolation
 - **User ID**: Who performed the action
-- **Action**: CREATE, UPDATE, DELETE, LOGIN, etc.
+- **Action**: CREATE, UPDATE, DELETE, LOGIN, LOGOUT, UPLOAD, DOWNLOAD, MOVE
 - **Entity Type**: ORGANIZATION, USER, FOLDER, DOCUMENT
 - **Entity ID**: ID of the affected entity
 - **Details**: JSONB field with old/new values
 - **IP Address**: Client IP address
+- **Session ID**: Session identifier
 - **User Agent**: Browser/client info
 - **Timestamp**: When the action occurred
+
+**AI Processing Fields** (optional):
+- **Event Type**: AI event (e.g., `document_parsed`, `summary_generated`)
+- **Document Hash**: SHA-256 hash of processed document
+- **File Name**: Filename for display
+- **Job ID**: Reference to processing job
 
 ### API Access Control
 
@@ -799,6 +706,101 @@ gcloud run services logs read document-intelligence-api \
   --limit=50
 ```
 
+### Cloud Run Service Details
+
+#### Live Service URLs
+
+| Environment | Service Name | URL |
+|-------------|--------------|-----|
+| Development | `document-intelligence-api-dev` | https://document-intelligence-api-dev-726919062103.us-central1.run.app |
+| Production | `document-intelligence-api` | *(configured via production trigger)* |
+
+#### Health Endpoints
+
+```bash
+# Check if service is healthy (includes database connectivity)
+curl https://document-intelligence-api-dev-726919062103.us-central1.run.app/health
+
+# Detailed status with all service health
+curl https://document-intelligence-api-dev-726919062103.us-central1.run.app/status
+
+# Liveness probe (app is running)
+curl https://document-intelligence-api-dev-726919062103.us-central1.run.app/live
+
+# Readiness probe (ready to serve traffic)
+curl https://document-intelligence-api-dev-726919062103.us-central1.run.app/ready
+```
+
+#### Configuration Files
+
+| File | Purpose |
+|------|---------|
+| `development-env.yaml` | Environment variables for development deployment |
+| `production-env.yaml` | Environment variables for production deployment |
+| `cloudbuild.yaml` | Cloud Build CI/CD configuration |
+| `deploy.sh` | Manual deployment script |
+
+#### Cloud SQL Connection
+
+The service connects to Cloud SQL PostgreSQL using the **Cloud SQL Auth Proxy**:
+
+```yaml
+# Key environment variables (set in development-env.yaml)
+CLOUD_SQL_INSTANCE: "biz2bricks-dev-v1:us-central1:doc-intelligence-db"
+USE_CLOUD_SQL_CONNECTOR: "true"
+CLOUD_SQL_IP_TYPE: "PUBLIC"  # Use PUBLIC for Auth Proxy, PRIVATE requires VPC
+DATABASE_NAME: "doc_intelligence"
+DATABASE_USER: "postgres"
+```
+
+**Required IAM Roles** for the Cloud Run service account:
+- `roles/cloudsql.client` - Connect to Cloud SQL
+- `roles/storage.objectAdmin` - Access GCS bucket
+- `roles/logging.logWriter` - Write logs
+
+#### Monitoring & Logs
+
+```bash
+# Stream logs in real-time
+gcloud run services logs tail document-intelligence-api-dev \
+  --region=us-central1
+
+# View recent logs
+gcloud run services logs read document-intelligence-api-dev \
+  --region=us-central1 \
+  --limit=100
+
+# View logs in Cloud Console
+# https://console.cloud.google.com/run/detail/us-central1/document-intelligence-api-dev/logs
+
+# Check service revisions
+gcloud run revisions list \
+  --service=document-intelligence-api-dev \
+  --region=us-central1
+```
+
+#### Troubleshooting Cloud Run
+
+**Health check failing (503)?**
+```bash
+# Check database connectivity settings
+# Ensure CLOUD_SQL_IP_TYPE=PUBLIC (not PRIVATE) unless using VPC Connector
+# Verify Cloud SQL instance name is correct
+
+# Check service account has cloudsql.client role
+gcloud projects get-iam-policy PROJECT_ID \
+  --filter="bindings.members:SERVICE_ACCOUNT" \
+  --format="table(bindings.role)"
+```
+
+**Container not starting?**
+```bash
+# Check container logs for startup errors
+gcloud logging read "resource.type=cloud_run_revision AND resource.labels.service_name=document-intelligence-api-dev" \
+  --limit=50 \
+  --format="table(timestamp,textPayload)"
+```
+
 ## Project Structure
 
 ```
@@ -816,15 +818,15 @@ doc_intelligence_backend_api_v2.0/
 │   │       ├── audit_context.py          # Audit context utilities
 │   │       ├── documents_main.py         # Document router aggregator
 │   │       └── documents_modules/        # Modular document endpoints
+│   │           ├── common.py            # Shared utilities and error handlers
 │   │           ├── document_upload.py
 │   │           ├── document_management.py
-│   │           ├── document_download.py
-│   │           └── document_sync.py
+│   │           └── document_download.py
 │   │
 │   ├── core/                              # Core functionality
 │   │   ├── config.py                     # Pydantic settings
+│   │   ├── cache.py                      # Caching infrastructure (memory/Redis)
 │   │   ├── db_client.py                  # PostgreSQL DatabaseManager
-│   │   ├── db_models.py                  # SQLAlchemy ORM models (incl. AuditLogModel)
 │   │   ├── gcs_client.py                 # GCS client singleton
 │   │   ├── security.py                   # JWT and password handling
 │   │   ├── logging.py                    # Structured logging
@@ -835,7 +837,16 @@ doc_intelligence_backend_api_v2.0/
 │   │   ├── organization.py               # Organization models
 │   │   ├── document.py                   # Document models
 │   │   ├── folder.py                     # Folder models
-│   │   └── schemas.py                    # Request/response schemas
+│   │   └── schemas/                      # Request/response schemas
+│   │       ├── __init__.py              # Re-exports all schemas
+│   │       ├── base.py                  # Pagination models
+│   │       ├── organization.py          # Organization schemas
+│   │       ├── user.py                  # User schemas
+│   │       ├── folder.py                # Folder schemas
+│   │       ├── document.py              # Document schemas
+│   │       ├── errors.py                # Error responses
+│   │       ├── stats.py                 # Stats & audit schemas
+│   │       └── validators.py            # Shared validators
 │   │
 │   ├── services/                          # Business logic
 │   │   ├── auth_service.py               # Authentication logic
@@ -843,14 +854,13 @@ doc_intelligence_backend_api_v2.0/
 │   │   ├── org_service.py                # Organization management (with audit)
 │   │   ├── folder_service.py             # Folder management (with audit)
 │   │   ├── audit_service.py              # Audit logging service
-│   │   └── document/                     # Document service facade
+│   │   └── document/                     # Document service facade (5 specialized services)
 │   │       ├── document_service.py           # Main facade
 │   │       ├── document_base_service.py
 │   │       ├── document_validation_service.py
 │   │       ├── document_storage_service.py
 │   │       ├── document_crud_service.py      # (with audit)
 │   │       ├── document_query_service.py
-│   │       ├── document_sync_service.py
 │   │       └── document_download_service.py
 │   │
 │   └── utils/                             # Utility functions
@@ -862,6 +872,7 @@ doc_intelligence_backend_api_v2.0/
 │   ├── setup_cloud_sql.py                # Cloud SQL instance setup
 │   ├── setup_secrets.py                  # Secret Manager setup
 │   ├── generate_env.py                   # Environment file generator
+│   ├── generate_client.py                # TypeScript type generator
 │   ├── init_database.py                  # Database table initialization
 │   └── provision_config.yaml             # Example provisioning config
 │

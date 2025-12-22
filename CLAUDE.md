@@ -31,15 +31,22 @@ uv run pytest tests/integration/ -v              # Integration tests only
 uv run pytest tests/ -k "test_login" -v          # Pattern match
 uv run pytest tests/ --cov=app --cov-report=html # Coverage
 
-# Database
-uv run python scripts/init_database.py           # Initialize tables
-uv run python scripts/init_database.py status    # Check status
+# Database & Infrastructure (via biz2bricks_infra)
+biz2bricks provision full-setup --env-file .env.production  # Full GCP setup
+biz2bricks db init --env-file .env                          # Initialize tables only
+biz2bricks db status --env-file .env                        # Check table status
+biz2bricks status --env-file .env.production                # Show all resource status
 
 # Deployment
 ./deploy.sh --test                               # Smoke tests
 ./deploy.sh --deploy                             # Deploy (development)
 ./deploy.sh --deploy --env production            # Deploy (production)
 ./deploy.sh --fast --skip-tests                  # Quick deploy
+
+# Client Generation (TypeScript types from OpenAPI)
+uv run python scripts/generate_client.py                    # Generate TS types to Next.js app
+uv run python scripts/generate_client.py --output ./types   # Custom output path
+uv run python scripts/generate_client.py --dry-run          # Preview without generating
 ```
 
 ## Architecture Overview
@@ -58,20 +65,49 @@ app/
 │   └── documents_modules/ # Document endpoints (modular)
 ├── services/               # Business logic layer
 │   ├── audit_service.py   # Non-blocking audit logging
-│   └── document/          # Facade pattern (6 services)
+│   └── document/          # Facade pattern (5 specialized services)
 ├── core/                   # Infrastructure
 │   ├── db_client.py       # DatabaseManager singleton
-│   ├── db_models.py       # SQLAlchemy ORM models
 │   ├── gcs_client.py      # GCS singleton
 │   └── security.py        # JWT, password hashing
 └── models/                 # Pydantic models & schemas
+    └── schemas/           # Request/response schemas (modular)
 ```
+
+### Model Architecture (Shared vs Local)
+
+**SQLAlchemy ORM Models** - Shared via `biz2bricks_core` package (GitHub):
+```python
+from biz2bricks_core import (
+    db,                    # DatabaseManager singleton
+    Base,                  # SQLAlchemy DeclarativeBase
+    UserModel,             # users table
+    OrganizationModel,     # organizations table (+ plan_id, subscription_status)
+    FolderModel,           # folders table
+    DocumentModel,         # documents table (+ file_hash, parsed_path, parsed_at)
+    AuditLogModel,         # audit_logs table (+ event_type, document_hash, file_name, job_id)
+    AuditAction,           # Enum: CREATE, UPDATE, DELETE, LOGIN, LOGOUT, UPLOAD, DOWNLOAD, MOVE
+    AuditEntityType,       # Enum: ORGANIZATION, USER, FOLDER, DOCUMENT
+)
+```
+
+**Pydantic Models** - Local to this service (`app/models/`):
+- `app/models/user.py` - `User`, `UserRole` (ADMIN, USER, VIEWER)
+- `app/models/organization.py` - `Organization`, `PlanType` (FREE, STARTER, PRO, BUSINESS)
+  - Includes: `plan_id`, `subscription_status` fields for usage tracking
+- `app/models/folder.py` - `Folder`
+- `app/models/document.py` - `Document`, `DocumentStatus`, `FileType`
+  - Includes: `file_hash` (SHA-256), `parsed_path`, `parsed_at` for AI processing
+- `app/models/schemas/` - API request/response schemas
+  - `stats.py` - `AuditLogEntry` with AI fields: `event_type`, `document_hash`, `file_name`, `job_id`
+
+This separation follows microservices best practices: SQLAlchemy models (database schema) are shared because all services use the same database, while Pydantic models (API contracts) remain local for independent evolution.
 
 ## Critical Patterns
 
 ### 1. Document Service Facade
 
-The document service uses **Facade Pattern** with 6 specialized services in `app/services/document/`:
+The document service uses **Facade Pattern** with 5 specialized services in `app/services/document/`:
 
 ```python
 # DocumentService composes specialized services
@@ -81,7 +117,6 @@ class DocumentService(DocumentBaseService):
         self.storage_service = DocumentStorageService()
         self.crud_service = DocumentCrudService()
         self.query_service = DocumentQueryService()
-        self.sync_service = DocumentSyncService()
         self.download_service = DocumentDownloadService()
 ```
 
@@ -102,7 +137,7 @@ JWT tokens: access (2 hours) + refresh (7 days) with automatic rotation.
 ### 3. SQLAlchemy Async Pattern
 
 ```python
-from app.core.db_client import db
+from biz2bricks_core import db, UserModel
 
 # Always use session context manager
 async with db.session() as session:
@@ -121,7 +156,7 @@ async with db.session() as session:
 
 ```python
 from app.services.audit_service import audit_service
-from app.core.db_models import AuditAction, AuditEntityType
+from biz2bricks_core import AuditAction, AuditEntityType
 
 # Fire-and-forget at end of operations
 asyncio.create_task(
@@ -136,7 +171,31 @@ asyncio.create_task(
 )
 ```
 
-Tracked: Organization, User, Folder, Document (CREATE, UPDATE, DELETE, LOGIN, LOGOUT)
+Tracked: Organization, User, Folder, Document (CREATE, UPDATE, DELETE, LOGIN, LOGOUT, UPLOAD, DOWNLOAD, MOVE)
+
+### 5. Caching Pattern
+
+The API includes a caching layer using `fastapi-cache2` with multi-tenant isolation:
+
+```python
+from app.core.cache import cached_documents, cached_folders, invalidate_cache
+
+# Use decorators for read operations (TTLs configured per entity)
+@cached_documents()  # TTL: 120 seconds
+async def get_document(org_id: str, doc_id: str):
+    ...
+
+@cached_folders()  # TTL: 300 seconds
+async def list_folders(org_id: str):
+    ...
+
+# Invalidate cache on mutations
+await invalidate_cache(f"documents:{org_id}:*")
+```
+
+**Backends**: `memory` (default) or `redis` (GCP Memorystore)
+**TTLs**: documents (2 min), folders (5 min), organizations (30 min), users (5 min)
+**Multi-tenant**: All cache keys are prefixed with `org_id` for isolation
 
 ## Adding New Features
 
@@ -151,7 +210,7 @@ async def new_endpoint(
 ):
     return await service.method_name(org_id=current_user["org_id"], **request.model_dump())
 
-# 2. Add Pydantic models in app/models/schemas.py
+# 2. Add Pydantic models in app/models/schemas/ (choose appropriate domain file)
 # 3. Implement service logic in app/services/
 # 4. Register router in app/main.py
 ```
@@ -216,6 +275,14 @@ CLOUD_SQL_IP_TYPE="PRIVATE"
 GCP_PROJECT_ID="your-project-id"
 GCS_BUCKET_NAME="your-bucket-name"
 JWT_SECRET_KEY="your-256-bit-secret"
+
+# Cache Configuration
+CACHE_ENABLED=true
+CACHE_BACKEND="memory"  # or "redis"
+CACHE_DEFAULT_TTL=300
+# Redis (optional - for production)
+REDIS_HOST="localhost"
+REDIS_PORT=6379
 ```
 
 ## Coding Standards
@@ -223,7 +290,7 @@ JWT_SECRET_KEY="your-256-bit-secret"
 ```python
 # ✅ Absolute imports
 from app.core.config import settings
-from app.core.db_client import db
+from biz2bricks_core import db
 
 # ✅ Dependency injection for services
 @router.post("/endpoint")
@@ -264,11 +331,47 @@ tests/
 | Category | Files |
 |----------|-------|
 | Entry Point | `app/main.py` |
-| Database | `app/core/db_client.py`, `app/core/db_models.py` |
+| Database | `biz2bricks_core` (shared models: OrganizationModel, UserModel, FolderModel, DocumentModel, AuditLogModel) |
+| Cache | `app/core/cache.py` |
 | Services | `app/services/document/document_service.py` (facade), `app/services/audit_service.py` |
 | Auth | `app/api/v1/auth.py`, `app/core/security.py` |
-| Scripts | `scripts/init_database.py`, `scripts/provision_all.py` |
+| Scripts | `scripts/generate_client.py` (TypeScript types from OpenAPI) |
+| Infra CLI | `biz2bricks provision`, `biz2bricks db init`, `biz2bricks status` (from biz2bricks_infra package) |
 | Deploy | `deploy.sh`, `cloudbuild.yaml` |
+
+## GCP Provisioning (via biz2bricks_infra)
+
+Infrastructure is now managed via the `biz2bricks` CLI from the `biz2bricks_infra` package:
+
+```bash
+# Install biz2bricks_infra
+uv pip install -e ../biz2bricks_infra
+
+# Full setup: Cloud SQL + GCS + Service Account + Secrets
+biz2bricks provision full-setup --env-file .env.production
+
+# Individual resources
+biz2bricks provision cloud-sql --env-file .env.production
+biz2bricks provision gcs-bucket --env-file .env.production
+biz2bricks provision service-account --env-file .env.production
+biz2bricks provision secrets --env-file .env.production
+
+# Database initialization
+biz2bricks db init --env-file .env
+
+# Show status of all resources
+biz2bricks status --env-file .env.production
+
+# Delete resources (with confirmation)
+biz2bricks delete all --env-file .env.production
+
+# Secrets management
+biz2bricks secrets list
+biz2bricks secrets get DATABASE_PASSWORD
+
+# Service account key generation
+biz2bricks sa create-key -o key.json --env-file .env.production
+```
 
 ## Health Endpoints
 
