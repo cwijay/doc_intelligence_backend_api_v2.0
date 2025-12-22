@@ -12,10 +12,16 @@ from datetime import datetime
 from fastapi import APIRouter, Query, Depends, HTTPException, status
 
 from app.core.simple_auth import get_current_user_dict
-from app.core.db_models import AuditAction, AuditEntityType
+from biz2bricks_core import AuditAction, AuditEntityType
 from app.core.logging import get_api_logger
 from app.services.audit_service import audit_service
-from app.models.schemas import PaginationParams
+from app.models.schemas import (
+    PaginationParams,
+    AuditLogListResponse,
+    ValidationErrorResponse,
+    ForbiddenErrorResponse,
+    InternalServerErrorResponse,
+)
 
 logger = get_api_logger()
 router = APIRouter()
@@ -28,15 +34,30 @@ def _is_admin(current_user: Dict[str, Any]) -> bool:
 
 @router.get(
     "/",
-    response_model=Dict[str, Any],
+    response_model=AuditLogListResponse,
     summary="List Audit Logs",
-    description="""
-    Query audit logs with filtering and pagination.
+    operation_id="listAuditLogs",
+    description="""Query audit logs with filtering and pagination.
 
-    **Access Control:**
-    - Admin users: Can view all audit logs for the organization
-    - Regular users: Can only view their own activity (logs where they are the actor)
-    """,
+**Authentication Required:** Yes
+
+**Access Control:**
+- Admin users: Can view all audit logs for the organization
+- Regular users: Can only view their own activity (logs where they are the actor)
+
+**Filter Options:**
+- `entity_type`: ORGANIZATION, USER, FOLDER, DOCUMENT
+- `action`: CREATE, UPDATE, DELETE, LOGIN, LOGOUT, UPLOAD, DOWNLOAD, MOVE
+- `user_id`: Filter by actor (admin only)
+- `start_date`/`end_date`: Date range filter (ISO 8601 format)
+
+**Example:** `/audit?entity_type=DOCUMENT&action=UPLOAD&page=1&per_page=20`""",
+    responses={
+        200: {"description": "Audit logs retrieved successfully"},
+        400: {"model": ValidationErrorResponse, "description": "Invalid filter parameters"},
+        403: {"model": ForbiddenErrorResponse, "description": "Non-admin users cannot filter by other users"},
+        500: {"model": InternalServerErrorResponse, "description": "Internal server error"},
+    },
 )
 async def list_audit_logs(
     page: int = Query(1, ge=1, description="Page number"),
@@ -143,9 +164,26 @@ async def list_audit_logs(
 
 @router.get(
     "/my-activity",
-    response_model=Dict[str, Any],
+    response_model=AuditLogListResponse,
     summary="Get My Activity",
-    description="Get the current user's own activity history. Convenience endpoint for users to view their actions.",
+    operation_id="getMyActivity",
+    description="""Get the current user's own activity history.
+
+**Authentication Required:** Yes
+
+A convenience endpoint that filters audit logs to show only the current user's actions.
+Useful for users to review their own recent activity.
+
+**Filter Options:**
+- `action`: CREATE, UPDATE, DELETE, LOGIN, LOGOUT, UPLOAD, DOWNLOAD, MOVE
+- `start_date`/`end_date`: Date range filter (ISO 8601 format)
+
+**Example:** `/audit/my-activity?action=UPLOAD&per_page=10`""",
+    responses={
+        200: {"description": "User activity retrieved successfully"},
+        400: {"model": ValidationErrorResponse, "description": "Invalid filter parameters"},
+        500: {"model": InternalServerErrorResponse, "description": "Internal server error"},
+    },
 )
 async def get_my_activity(
     page: int = Query(1, ge=1, description="Page number"),
@@ -218,7 +256,30 @@ async def get_my_activity(
     "/entity/{entity_type}/{entity_id}",
     response_model=List[Dict[str, Any]],
     summary="Get Entity History",
-    description="Get complete audit history for a specific entity. **Admin only.**",
+    operation_id="getEntityHistory",
+    description="""Get complete audit history for a specific entity.
+
+**Authentication Required:** Yes (Admin only)
+
+Returns all audit events for a document, user, folder, or organization.
+
+**Use Cases:**
+- View all changes to a specific document
+- Track user account modifications
+- Debug folder operations
+- Audit organization-level changes
+
+**Path Parameters:**
+- `entity_type`: ORGANIZATION, USER, FOLDER, DOCUMENT
+- `entity_id`: The unique identifier of the entity
+
+**Example:** `/audit/entity/DOCUMENT/doc_abc123?limit=100`""",
+    responses={
+        200: {"description": "Entity history retrieved successfully"},
+        400: {"model": ValidationErrorResponse, "description": "Invalid entity_type"},
+        403: {"model": ForbiddenErrorResponse, "description": "Admin access required"},
+        500: {"model": InternalServerErrorResponse, "description": "Internal server error"},
+    },
 )
 async def get_entity_history(
     entity_type: str,

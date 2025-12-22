@@ -1,19 +1,15 @@
 """
 Document Query Service - Complex queries, filtering, and search operations.
 
-This service handles advanced document search and retrieval operations:
+This service handles document search and retrieval operations:
 - Paginated document listing with complex filters
-- Filename-based document search with relationship data
-- Folder-based document queries with metadata enrichment
 - GCS-based document listing for direct storage queries
-- Advanced search criteria and result compilation
 """
 
 import math
-from datetime import datetime
-from typing import Optional, Any
+from typing import Optional
 
-from sqlalchemy import select, func
+from sqlalchemy import select, func, or_
 
 from app.models.document import Document, DocumentStatus, FileType
 from app.models.schemas import (
@@ -23,23 +19,16 @@ from app.models.schemas import (
     PaginationParams,
 )
 from app.core.gcs_client import gcs_client
-from app.core.db_models import DocumentModel
-from .document_base_service import DocumentBaseService, DocumentNotFoundError
+from biz2bricks_core import DocumentModel, FolderModel
+from .document_base_service import DocumentBaseService
 
 
 class DocumentQueryService(DocumentBaseService):
     """Service for complex document queries and search operations."""
 
     def __init__(self):
-        """Initialize the query service with dependencies."""
+        """Initialize the query service."""
         super().__init__()
-
-        # Import here to avoid circular imports
-        from app.services.org_service import organization_service
-        from app.services.folder_service import folder_service
-
-        self.org_service = organization_service
-        self.folder_service = folder_service
 
     def _model_to_pydantic(self, model: DocumentModel) -> Document:
         """Convert SQLAlchemy model to Pydantic model."""
@@ -107,6 +96,15 @@ class DocumentQueryService(DocumentBaseService):
 
                 # Apply ALL filters in SQL (not in application)
                 if filters:
+                    # INFO log to trace filter values
+                    self.logger.info(
+                        "Document list query - filters received",
+                        org_id=org_id,
+                        folder_name=filters.folder_name,
+                        folder_id=filters.folder_id,
+                        folder_path=filters.folder_path,
+                    )
+
                     if filters.file_type:
                         file_type_value = (
                             filters.file_type.value
@@ -125,6 +123,48 @@ class DocumentQueryService(DocumentBaseService):
 
                     if filters.folder_id:
                         stmt = stmt.where(DocumentModel.folder_id == filters.folder_id)
+
+                    # Filter by folder_name (hybrid: folder_id OR storage_path pattern)
+                    if filters.folder_name:
+                        conditions = []
+
+                        # Condition 1: Match by folder_id (legacy uploads)
+                        folder_lookup = await session.execute(
+                            select(FolderModel.id).where(
+                                FolderModel.org_id == org_id,
+                                FolderModel.name == filters.folder_name,
+                                FolderModel.is_active == True,
+                            )
+                        )
+                        folder_id_result = folder_lookup.scalar_one_or_none()
+
+                        # Condition 2: Match by storage_path pattern (target_path uploads)
+                        # Pattern: {org}/original/{folder_name}/{file}
+                        storage_pattern = f"%/original/{filters.folder_name}/%"
+
+                        # INFO log to trace filter application
+                        self.logger.info(
+                            "Applying folder_name filter",
+                            folder_name=filters.folder_name,
+                            folder_id_found=folder_id_result,
+                            storage_pattern=storage_pattern,
+                        )
+
+                        if folder_id_result:
+                            conditions.append(
+                                DocumentModel.folder_id == folder_id_result
+                            )
+
+                        conditions.append(
+                            DocumentModel.storage_path.ilike(storage_pattern)
+                        )
+
+                        # Apply OR of all conditions
+                        self.logger.info(
+                            "Folder filter conditions",
+                            conditions_count=len(conditions),
+                        )
+                        stmt = stmt.where(or_(*conditions))
 
                     if filters.uploaded_by:
                         stmt = stmt.where(
@@ -155,6 +195,15 @@ class DocumentQueryService(DocumentBaseService):
                 # Execute query - only fetches paginated results
                 result = await session.execute(stmt)
                 doc_models = result.scalars().all()
+
+                # Log returned documents for folder_name filter
+                if filters and filters.folder_name:
+                    self.logger.info(
+                        "Documents returned for folder_name filter",
+                        folder_name=filters.folder_name,
+                        count=len(doc_models),
+                        storage_paths=[dm.storage_path for dm in doc_models],
+                    )
 
                 # Convert and enrich ONLY the paginated documents (not all)
                 document_responses = []
@@ -345,316 +394,3 @@ class DocumentQueryService(DocumentBaseService):
                 per_page=pagination.per_page,
                 total_pages=0,
             )
-
-    async def get_document_by_filename(
-        self,
-        org_id: str,
-        filename: str,
-        exact_match: bool = True,
-        include_inactive: bool = False,
-        storage_service=None,
-        validation_service=None,
-    ) -> Any:
-        """
-        Get document by filename using PostgreSQL with relationship data.
-        """
-        from app.models.schemas import (
-            DocumentDatabaseResponse,
-            DocumentSearchCriteria,
-            DocumentDatabaseMetadata,
-            DocumentRelationships,
-            DocumentRelationshipOrganization,
-            DocumentRelationshipFolder,
-            DocumentRelationshipUploader,
-        )
-
-        try:
-            async with self.db.session() as session:
-                # Build query
-                stmt = select(DocumentModel).where(
-                    DocumentModel.organization_id == org_id
-                )
-
-                if not include_inactive:
-                    stmt = stmt.where(DocumentModel.is_active == True)
-
-                if exact_match:
-                    stmt = stmt.where(DocumentModel.filename == filename)
-                else:
-                    stmt = stmt.where(DocumentModel.filename.ilike(f"%{filename}%"))
-
-                result = await session.execute(stmt)
-                doc_models = result.scalars().all()
-
-                found_documents = []
-                for doc_model in doc_models:
-                    document = self._model_to_pydantic(doc_model)
-
-                    if storage_service:
-                        document = await storage_service._enrich_document_metadata(
-                            document
-                        )
-
-                    if validation_service:
-                        document = validation_service._ensure_safe_metadata(document)
-
-                    found_documents.append(document)
-
-                    if exact_match:
-                        break
-
-                if not found_documents:
-                    search_type = "exact" if exact_match else "partial"
-                    raise DocumentNotFoundError(
-                        f"No document found with filename '{filename}' using {search_type} match"
-                    )
-
-                document = found_documents[0]
-
-                # Get organization info
-                org = await self.org_service.get_organization(org_id)
-                org_relationship = DocumentRelationshipOrganization(
-                    id=org.id, name=org.name
-                )
-
-                # Get folder info
-                folder_relationship = None
-                if document.folder_id:
-                    try:
-                        folder = await self.folder_service.get_folder(
-                            org_id, document.folder_id
-                        )
-                        folder_relationship = DocumentRelationshipFolder(
-                            id=folder.id, name=folder.name, path=folder.path
-                        )
-                    except Exception:
-                        folder_relationship = DocumentRelationshipFolder(
-                            id=document.folder_id,
-                            name="Unknown Folder",
-                            path="/unknown",
-                        )
-
-                # Get uploader info
-                try:
-                    from app.services.user_service import user_service
-
-                    uploader = await user_service.get_user(org_id, document.uploaded_by)
-                    uploader_relationship = DocumentRelationshipUploader(
-                        id=uploader.id,
-                        email=uploader.email,
-                        full_name=uploader.full_name,
-                    )
-                except Exception:
-                    uploader_relationship = DocumentRelationshipUploader(
-                        id=document.uploaded_by,
-                        email="unknown@example.com",
-                        full_name="Unknown User",
-                    )
-
-                search_criteria = DocumentSearchCriteria(
-                    filename=filename,
-                    exact_match=exact_match,
-                    include_inactive=include_inactive,
-                )
-
-                database_metadata = DocumentDatabaseMetadata(
-                    document_ref=f"documents/{document.id}",
-                    query_method=(
-                        "filename_exact_match"
-                        if exact_match
-                        else "filename_partial_match"
-                    ),
-                    last_updated=document.updated_at,
-                )
-
-                relationships = DocumentRelationships(
-                    organization=org_relationship,
-                    folder=folder_relationship,
-                    uploader=uploader_relationship,
-                )
-
-                return DocumentDatabaseResponse(
-                    source="postgresql",
-                    search_criteria=search_criteria,
-                    document=DocumentResponse.model_validate(document),
-                    database_metadata=database_metadata,
-                    relationships=relationships,
-                )
-
-        except DocumentNotFoundError:
-            raise
-        except Exception as e:
-            self.logger.error("Error searching document by filename", error=str(e))
-            raise DocumentNotFoundError(f"Failed to search for document: {e}")
-
-    async def get_documents_by_folder_name(
-        self,
-        org_id: str,
-        folder_name: str,
-        pagination: PaginationParams,
-        exact_match: bool = True,
-        include_inactive: bool = False,
-        additional_filters: Optional[DocumentFilters] = None,
-    ) -> Any:
-        """
-        Get documents by folder name using PostgreSQL.
-        """
-        from app.models.schemas import (
-            DocumentDatabaseFolderListResponse,
-            DocumentFolderSearchCriteria,
-            DocumentFolderInfo,
-            DocumentDatabaseMetadata,
-        )
-
-        try:
-            # Find folder by name
-            folder = await self._find_folder_by_name(org_id, folder_name, exact_match)
-
-            if not folder:
-                search_type = "exact" if exact_match else "partial"
-                raise DocumentNotFoundError(
-                    f"No folder found with name '{folder_name}' using {search_type} match"
-                )
-
-            async with self.db.session() as session:
-                # Build query
-                stmt = select(DocumentModel).where(
-                    DocumentModel.organization_id == org_id,
-                    DocumentModel.folder_id == folder.id,
-                )
-
-                if not include_inactive:
-                    stmt = stmt.where(DocumentModel.is_active == True)
-
-                if additional_filters:
-                    if additional_filters.file_type:
-                        file_type_value = (
-                            additional_filters.file_type.value
-                            if hasattr(additional_filters.file_type, "value")
-                            else additional_filters.file_type
-                        )
-                        stmt = stmt.where(DocumentModel.file_type == file_type_value)
-
-                    if additional_filters.status:
-                        status_value = (
-                            additional_filters.status.value
-                            if hasattr(additional_filters.status, "value")
-                            else additional_filters.status
-                        )
-                        stmt = stmt.where(DocumentModel.status == status_value)
-
-                result = await session.execute(stmt)
-                doc_models = result.scalars().all()
-
-                found_documents = []
-                for doc_model in doc_models:
-                    document = self._model_to_pydantic(doc_model)
-
-                    if additional_filters and additional_filters.filename:
-                        if (
-                            additional_filters.filename.lower()
-                            not in document.filename.lower()
-                        ):
-                            continue
-
-                    found_documents.append(document)
-
-                # Apply pagination
-                total = len(found_documents)
-                start_idx = pagination.offset
-                end_idx = start_idx + pagination.per_page
-                paginated_documents = found_documents[start_idx:end_idx]
-
-                document_responses = [
-                    DocumentResponse.model_validate(doc) for doc in paginated_documents
-                ]
-
-                folder_info = DocumentFolderInfo(
-                    id=folder.id,
-                    name=folder.name,
-                    path=f"/{folder.name}",
-                    parent_folder_id=folder.parent_folder_id,
-                    created_by=folder.created_by,
-                    created_at=folder.created_at,
-                    document_count=total,
-                )
-
-                search_criteria = DocumentFolderSearchCriteria(
-                    folder_name=folder_name,
-                    exact_match=exact_match,
-                    include_inactive=include_inactive,
-                    additional_filters=(
-                        additional_filters.model_dump(exclude_none=True)
-                        if additional_filters
-                        else {}
-                    ),
-                )
-
-                database_metadata = DocumentDatabaseMetadata(
-                    document_ref=f"documents (folder_id == {folder.id})",
-                    query_method="folder_id_exact_match_with_filters",
-                    last_updated=datetime.now(),
-                )
-
-                total_pages = math.ceil(total / pagination.per_page) if total > 0 else 0
-
-                return DocumentDatabaseFolderListResponse(
-                    source="postgresql",
-                    folder_info=folder_info,
-                    search_criteria=search_criteria,
-                    documents=document_responses,
-                    total=total,
-                    page=pagination.page,
-                    per_page=pagination.per_page,
-                    total_pages=total_pages,
-                    database_metadata=database_metadata,
-                )
-
-        except DocumentNotFoundError:
-            raise
-        except Exception as e:
-            self.logger.error("Error searching documents by folder name", error=str(e))
-            raise DocumentNotFoundError(f"Failed to search documents: {e}")
-
-    async def _find_folder_by_name(
-        self, org_id: str, folder_name: str, exact_match: bool = True
-    ):
-        """Find folder by name using direct SQL query for performance."""
-        from app.core.db_models import FolderModel
-
-        try:
-            async with self.db.session() as session:
-                stmt = select(FolderModel).where(
-                    FolderModel.organization_id == org_id, FolderModel.is_active == True
-                )
-
-                if exact_match:
-                    stmt = stmt.where(FolderModel.name == folder_name)
-                else:
-                    stmt = stmt.where(FolderModel.name.ilike(f"%{folder_name}%"))
-
-                stmt = stmt.limit(1)
-                result = await session.execute(stmt)
-                folder_model = result.scalar_one_or_none()
-
-                if folder_model:
-                    # Convert to Folder pydantic model
-                    from app.models.folder import Folder
-
-                    return Folder(
-                        id=folder_model.id,
-                        org_id=folder_model.organization_id,
-                        name=folder_model.name,
-                        path=folder_model.path,
-                        parent_folder_id=folder_model.parent_folder_id,
-                        created_by=folder_model.created_by,
-                        is_active=folder_model.is_active,
-                        created_at=folder_model.created_at,
-                        updated_at=folder_model.updated_at,
-                    )
-
-                return None
-
-        except Exception as e:
-            self.logger.error("Error finding folder by name", error=str(e))
-            return None

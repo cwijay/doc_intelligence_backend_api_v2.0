@@ -21,7 +21,7 @@ class TestAuditEnums:
     @pytest.mark.unit
     def test_audit_action_values(self):
         """Test AuditAction enum values."""
-        from app.core.db_models import AuditAction
+        from biz2bricks_core import AuditAction
 
         assert AuditAction.CREATE.value == "CREATE"
         assert AuditAction.UPDATE.value == "UPDATE"
@@ -35,7 +35,7 @@ class TestAuditEnums:
     @pytest.mark.unit
     def test_audit_entity_type_values(self):
         """Test AuditEntityType enum values."""
-        from app.core.db_models import AuditEntityType
+        from biz2bricks_core import AuditEntityType
 
         assert AuditEntityType.ORGANIZATION.value == "ORGANIZATION"
         assert AuditEntityType.USER.value == "USER"
@@ -45,7 +45,7 @@ class TestAuditEnums:
     @pytest.mark.unit
     def test_audit_action_string_comparison(self):
         """Test that AuditAction can be compared as strings."""
-        from app.core.db_models import AuditAction
+        from biz2bricks_core import AuditAction
 
         assert AuditAction.CREATE == "CREATE"
         assert AuditAction.LOGIN == "LOGIN"
@@ -53,7 +53,7 @@ class TestAuditEnums:
     @pytest.mark.unit
     def test_audit_entity_type_string_comparison(self):
         """Test that AuditEntityType can be compared as strings."""
-        from app.core.db_models import AuditEntityType
+        from biz2bricks_core import AuditEntityType
 
         assert AuditEntityType.USER == "USER"
         assert AuditEntityType.DOCUMENT == "DOCUMENT"
@@ -65,7 +65,7 @@ class TestOrganizationModel:
     @pytest.mark.unit
     def test_organization_model_creation(self):
         """Test creating an OrganizationModel instance."""
-        from app.core.db_models import OrganizationModel
+        from biz2bricks_core import OrganizationModel
 
         org = OrganizationModel(
             id=str(uuid.uuid4()),
@@ -86,7 +86,7 @@ class TestOrganizationModel:
     @pytest.mark.unit
     def test_organization_to_dict(self):
         """Test OrganizationModel.to_dict() serialization."""
-        from app.core.db_models import OrganizationModel
+        from biz2bricks_core import OrganizationModel
 
         now = datetime.now(timezone.utc)
         org_id = str(uuid.uuid4())
@@ -116,7 +116,7 @@ class TestOrganizationModel:
     @pytest.mark.unit
     def test_organization_to_dict_with_none_timestamps(self):
         """Test to_dict handles None timestamps."""
-        from app.core.db_models import OrganizationModel
+        from biz2bricks_core import OrganizationModel
 
         org = OrganizationModel(
             id=str(uuid.uuid4()),
@@ -142,7 +142,7 @@ class TestUserModel:
     @pytest.mark.unit
     def test_user_model_creation(self):
         """Test creating a UserModel instance."""
-        from app.core.db_models import UserModel
+        from biz2bricks_core import UserModel
 
         user = UserModel(
             id=str(uuid.uuid4()),
@@ -166,7 +166,7 @@ class TestUserModel:
     @pytest.mark.unit
     def test_user_to_dict_excludes_password(self):
         """Test that UserModel.to_dict() excludes password_hash."""
-        from app.core.db_models import UserModel
+        from biz2bricks_core import UserModel
 
         now = datetime.now(timezone.utc)
         user_id = str(uuid.uuid4())
@@ -203,7 +203,7 @@ class TestUserModel:
     @pytest.mark.unit
     def test_user_to_dict_with_none_last_login(self):
         """Test to_dict handles None last_login."""
-        from app.core.db_models import UserModel
+        from biz2bricks_core import UserModel
 
         user = UserModel(
             id=str(uuid.uuid4()),
@@ -230,7 +230,7 @@ class TestFolderModel:
     @pytest.mark.unit
     def test_folder_model_creation(self):
         """Test creating a FolderModel instance."""
-        from app.core.db_models import FolderModel
+        from biz2bricks_core import FolderModel
 
         folder = FolderModel(
             id=str(uuid.uuid4()),
@@ -252,7 +252,7 @@ class TestFolderModel:
     @pytest.mark.unit
     def test_folder_with_parent(self):
         """Test FolderModel with parent folder."""
-        from app.core.db_models import FolderModel
+        from biz2bricks_core import FolderModel
 
         parent_id = str(uuid.uuid4())
 
@@ -274,7 +274,7 @@ class TestFolderModel:
     @pytest.mark.unit
     def test_folder_to_dict(self):
         """Test FolderModel.to_dict() serialization."""
-        from app.core.db_models import FolderModel
+        from biz2bricks_core import FolderModel
 
         now = datetime.now(timezone.utc)
         folder_id = str(uuid.uuid4())
@@ -310,7 +310,7 @@ class TestDocumentModel:
     @pytest.mark.unit
     def test_document_model_creation(self):
         """Test creating a DocumentModel instance."""
-        from app.core.db_models import DocumentModel
+        from biz2bricks_core import DocumentModel
 
         doc = DocumentModel(
             id=str(uuid.uuid4()),
@@ -338,7 +338,7 @@ class TestDocumentModel:
     @pytest.mark.unit
     def test_document_to_dict(self):
         """Test DocumentModel.to_dict() serialization."""
-        from app.core.db_models import DocumentModel
+        from biz2bricks_core import DocumentModel
 
         now = datetime.now(timezone.utc)
         doc_id = str(uuid.uuid4())
@@ -380,7 +380,7 @@ class TestDocumentModel:
     @pytest.mark.unit
     def test_document_without_folder(self):
         """Test DocumentModel without folder (root level document)."""
-        from app.core.db_models import DocumentModel
+        from biz2bricks_core import DocumentModel
 
         doc = DocumentModel(
             id=str(uuid.uuid4()),
@@ -410,7 +410,7 @@ class TestAuditLogModel:
     @pytest.mark.unit
     def test_audit_log_model_creation(self):
         """Test creating an AuditLogModel instance."""
-        from app.core.db_models import AuditLogModel, AuditAction, AuditEntityType
+        from biz2bricks_core import AuditLogModel, AuditAction, AuditEntityType
 
         audit = AuditLogModel(
             id=str(uuid.uuid4()),
@@ -434,7 +434,7 @@ class TestAuditLogModel:
     @pytest.mark.unit
     def test_audit_log_to_dict(self):
         """Test AuditLogModel.to_dict() serialization."""
-        from app.core.db_models import AuditLogModel
+        from biz2bricks_core import AuditLogModel
 
         now = datetime.now(timezone.utc)
         audit_id = str(uuid.uuid4())
@@ -474,7 +474,7 @@ class TestAuditLogModel:
     @pytest.mark.unit
     def test_audit_log_system_action_no_user(self):
         """Test AuditLogModel for system actions without user."""
-        from app.core.db_models import AuditLogModel
+        from biz2bricks_core import AuditLogModel
 
         audit = AuditLogModel(
             id=str(uuid.uuid4()),
@@ -500,7 +500,7 @@ class TestAuditLogModel:
     @pytest.mark.unit
     def test_audit_log_ipv6_address(self):
         """Test AuditLogModel with IPv6 address."""
-        from app.core.db_models import AuditLogModel
+        from biz2bricks_core import AuditLogModel
 
         ipv6_address = "2001:0db8:85a3:0000:0000:8a2e:0370:7334"
 
@@ -528,7 +528,7 @@ class TestModelDefaults:
     @pytest.mark.unit
     def test_organization_default_plan_type(self):
         """Test OrganizationModel default plan_type."""
-        from app.core.db_models import OrganizationModel
+        from biz2bricks_core import OrganizationModel
 
         # When plan_type is not specified, it should default to "free"
         org = OrganizationModel(
@@ -546,7 +546,7 @@ class TestModelDefaults:
     @pytest.mark.unit
     def test_document_default_status(self):
         """Test DocumentModel default status."""
-        from app.core.db_models import DocumentModel
+        from biz2bricks_core import DocumentModel
 
         doc = DocumentModel(
             id=str(uuid.uuid4()),
@@ -569,7 +569,7 @@ class TestModelDefaults:
     @pytest.mark.unit
     def test_user_default_role(self):
         """Test UserModel default role."""
-        from app.core.db_models import UserModel
+        from biz2bricks_core import UserModel
 
         user = UserModel(
             id=str(uuid.uuid4()),
@@ -593,7 +593,7 @@ class TestModelTableNames:
     @pytest.mark.unit
     def test_table_names(self):
         """Test that models have correct table names."""
-        from app.core.db_models import (
+        from biz2bricks_core import (
             OrganizationModel,
             UserModel,
             FolderModel,
@@ -614,7 +614,7 @@ class TestModelIndexes:
     @pytest.mark.unit
     def test_organization_indexes_defined(self):
         """Test OrganizationModel has expected indexes."""
-        from app.core.db_models import OrganizationModel
+        from biz2bricks_core import OrganizationModel
 
         # Check __table_args__ contains indexes
         table_args = OrganizationModel.__table_args__
@@ -626,7 +626,7 @@ class TestModelIndexes:
     @pytest.mark.unit
     def test_user_indexes_defined(self):
         """Test UserModel has expected indexes."""
-        from app.core.db_models import UserModel
+        from biz2bricks_core import UserModel
 
         table_args = UserModel.__table_args__
         index_names = [idx.name for idx in table_args if hasattr(idx, 'name')]
@@ -638,7 +638,7 @@ class TestModelIndexes:
     @pytest.mark.unit
     def test_document_indexes_defined(self):
         """Test DocumentModel has expected indexes."""
-        from app.core.db_models import DocumentModel
+        from biz2bricks_core import DocumentModel
 
         table_args = DocumentModel.__table_args__
         index_names = [idx.name for idx in table_args if hasattr(idx, 'name')]
@@ -650,7 +650,7 @@ class TestModelIndexes:
     @pytest.mark.unit
     def test_audit_log_indexes_defined(self):
         """Test AuditLogModel has expected indexes."""
-        from app.core.db_models import AuditLogModel
+        from biz2bricks_core import AuditLogModel
 
         table_args = AuditLogModel.__table_args__
         index_names = [idx.name for idx in table_args if hasattr(idx, 'name')]

@@ -129,13 +129,10 @@ class Settings(BaseSettings):
         return v
 
     # CORS Settings - Environment-specific configuration
+    # Next.js frontend runs on port 3000. Use ADDITIONAL_CORS_ORIGINS env var for other ports.
     CORS_ORIGINS: List[str] = [
         "http://localhost:3000",
-        "http://localhost:3001",  # Next.js dev server (fallback)
-        "http://127.0.0.1:3000",  # Alternative localhost format (primary)
-        "http://127.0.0.1:3001",  # Alternative localhost format (fallback)
-        "http://localhost:8080",
-        "http://localhost:8000",
+        "http://127.0.0.1:3000",
     ]
 
     # Additional CORS Origins (JSON string from env var)
@@ -178,6 +175,23 @@ class Settings(BaseSettings):
     # Logging Configuration
     LOG_LEVEL: str = "INFO"
     LOG_FORMAT: str = "text"  # json or text
+
+    # Cache Configuration
+    CACHE_ENABLED: bool = True
+    CACHE_BACKEND: str = "memory"  # "memory" (default) or "redis"
+    CACHE_DEFAULT_TTL: int = 300  # 5 minutes default
+
+    # Redis Configuration (only used when CACHE_BACKEND=redis)
+    REDIS_HOST: Optional[str] = None  # GCP Memorystore IP
+    REDIS_PORT: int = 6379
+    REDIS_PASSWORD: Optional[str] = None
+    REDIS_DB: int = 0
+
+    # Cache TTL Settings (in seconds)
+    CACHE_DOCUMENT_TTL: int = 120  # 2 minutes - documents change frequently
+    CACHE_FOLDER_TTL: int = 300  # 5 minutes
+    CACHE_ORG_TTL: int = 1800  # 30 minutes - orgs rarely change
+    CACHE_USER_TTL: int = 300  # 5 minutes
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -273,23 +287,9 @@ class Settings(BaseSettings):
                     )
                     origins.append(cloud_run_url)
 
-        # In development, add wildcard localhost support for maximum compatibility
-        if self.is_development:
-            # Add common development ports that might be used
-            dev_ports = [3000, 3001, 3002, 5173, 4173, 8080, 8000, 9000, 5000, 8001]
-            for port in dev_ports:
-                origins.extend(
-                    [
-                        f"http://localhost:{port}",
-                        f"http://127.0.0.1:{port}",
-                        f"https://localhost:{port}",
-                        f"https://127.0.0.1:{port}",
-                    ]
-                )
-
-            # In development, also include production frontend URL for testing
-            if self.FRONTEND_CLOUD_RUN_URL:
-                origins.append(self.FRONTEND_CLOUD_RUN_URL.rstrip("/"))
+        # In development, include production frontend URL for testing if configured
+        if self.is_development and self.FRONTEND_CLOUD_RUN_URL:
+            origins.append(self.FRONTEND_CLOUD_RUN_URL.rstrip("/"))
 
         # Remove duplicates while preserving order
         seen = set()

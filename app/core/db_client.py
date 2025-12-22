@@ -288,7 +288,7 @@ class DatabaseManager:
 
     async def create_tables(self):
         """Create all tables (for development/testing)."""
-        from app.core.db_models import Base
+        from biz2bricks_core import Base
 
         engine = await self.get_engine_async()
         if engine:
@@ -298,7 +298,7 @@ class DatabaseManager:
 
     async def drop_tables(self):
         """Drop all tables (for testing only)."""
-        from app.core.db_models import Base
+        from biz2bricks_core import Base
 
         engine = await self.get_engine_async()
         if engine:

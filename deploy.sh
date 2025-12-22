@@ -199,21 +199,33 @@ build_and_push_image() {
 deploy_cloud_run() {
     local service="$1" region="$2" image="$3" env_file="$4"
     local memory="$5" cpu="$6" concurrency="$7" max_instances="$8"
-    local timeout="$9" service_account="${10}"
+    local timeout="$9" service_account="${10}" cloud_sql_instance="${11}"
 
     log_info "Deploying Cloud Run service '$service' in region '$region'"
-    gcloud run deploy "$service" \
-        --image "$image" \
-        --region "$region" \
-        --platform managed \
-        --allow-unauthenticated \
-        --memory "$memory" \
-        --cpu "$cpu" \
-        --concurrency "$concurrency" \
-        --max-instances "$max_instances" \
-        --timeout "$timeout" \
-        --service-account "$service_account" \
+
+    # Build deploy command with optional Cloud SQL instance
+    local deploy_cmd=(
+        gcloud run deploy "$service"
+        --image "$image"
+        --region "$region"
+        --platform managed
+        --allow-unauthenticated
+        --memory "$memory"
+        --cpu "$cpu"
+        --concurrency "$concurrency"
+        --max-instances "$max_instances"
+        --timeout "$timeout"
+        --service-account "$service_account"
         --env-vars-file "$env_file"
+    )
+
+    # Add Cloud SQL instance if provided
+    if [[ -n "$cloud_sql_instance" ]]; then
+        log_info "Adding Cloud SQL instance: $cloud_sql_instance"
+        deploy_cmd+=(--add-cloudsql-instances "$cloud_sql_instance")
+    fi
+
+    "${deploy_cmd[@]}"
     log_success "Cloud Run deployment completed"
 }
 
@@ -436,6 +448,19 @@ run_deploy_mode() {
     env_set "LOG_LEVEL" "$log_level"
     env_set "LOG_FORMAT" "json"
 
+    # Set database environment variables
+    local cloud_sql_instance="$(env_get "CLOUD_SQL_INSTANCE")"
+    if [[ -n "$cloud_sql_instance" ]]; then
+        env_set "CLOUD_SQL_INSTANCE" "$cloud_sql_instance"
+        env_set "DATABASE_NAME" "$(env_get "DATABASE_NAME" "doc_intelligence")"
+        env_set "DATABASE_USER" "$(env_get "DATABASE_USER" "postgres")"
+        env_set "USE_CLOUD_SQL_CONNECTOR" "true"
+        env_set "CLOUD_SQL_IP_TYPE" "PUBLIC"
+        log_info "Cloud SQL instance configured: $cloud_sql_instance"
+    else
+        log_warn "CLOUD_SQL_INSTANCE not set in env file - database connection may fail"
+    fi
+
     # Create temp env file
     local tmp_env_file
     tmp_env_file="$(mktemp)"
@@ -450,7 +475,7 @@ run_deploy_mode() {
 
     # Deploy to Cloud Run
     deploy_cloud_run "$service_name" "$region" "$latest_tag" "$tmp_env_file" \
-        "$memory" "$cpu" "$concurrency" "$max_instances" "$timeout" "$service_account"
+        "$memory" "$cpu" "$concurrency" "$max_instances" "$timeout" "$service_account" "$cloud_sql_instance"
 
     # Get service URL
     local service_url

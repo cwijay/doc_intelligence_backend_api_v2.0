@@ -16,7 +16,8 @@ from app.core.simple_auth import get_current_user_dict
 from app.core.config import settings
 from app.core.logging import configure_logging, setup_request_logging, get_logger
 from app.core.exceptions import setup_exception_handlers
-from app.core.db_client import db
+from biz2bricks_core import db
+from app.core.cache import init_cache, close_cache, get_cache_status
 
 # Configure logging first
 configure_logging()
@@ -63,6 +64,13 @@ async def lifespan(app: FastAPI):
         if settings.ENVIRONMENT.lower() == "production":
             raise
 
+    # Initialize cache
+    try:
+        await init_cache()
+        startup_tasks.append(f"Cache initialized ({settings.CACHE_BACKEND})")
+    except Exception as e:
+        logger.warning("Cache initialization failed", error=str(e))
+
     logger.info("Application startup completed", tasks=startup_tasks)
 
     yield
@@ -71,6 +79,13 @@ async def lifespan(app: FastAPI):
     logger.info("Shutting down application")
 
     shutdown_tasks = []
+
+    # Close cache connections
+    try:
+        await close_cache()
+        shutdown_tasks.append("Cache closed")
+    except Exception as e:
+        logger.error("Error closing cache", error=str(e))
 
     # Close database connections
     try:
@@ -228,24 +243,74 @@ def custom_openapi():
         tags=[
             {
                 "name": "Authentication",
-                "description": "Session-based JWT authentication with refresh tokens",
+                "description": """Session-based JWT authentication with refresh tokens.
+
+**Key Features:**
+- UUID-based session tokens (24-hour expiration)
+- Automatic token rotation on refresh
+- Grace period for seamless token refresh
+- Multi-device session management
+
+**Endpoints:** login, register, logout, refresh, validate""",
             },
             {
                 "name": "Documents",
-                "description": "Document upload, storage, and management",
+                "description": """Document upload, storage, and management.
+
+**Supported Formats:** PDF, XLSX, CSV, JPEG, PNG, DOCX, DOC, PPTX, PPT, TXT, GIF, WEBP, TIFF
+**Max File Size:** 50MB
+**Storage:** Google Cloud Storage with signed URLs
+
+**Key Features:**
+- Target path control for precise storage location
+- Folder-based organization (legacy support)
+- Signed download URLs with configurable expiration
+- Document status tracking (uploading → uploaded → parsing → parsed)""",
             },
             {
                 "name": "Organizations",
-                "description": "Multi-tenant organization management",
+                "description": """Multi-tenant organization management.
+
+**Plan Types:** FREE, STARTER, PRO
+**Features:** Domain configuration, settings management, user quotas
+
+**Key Operations:** Create, update, delete, list organizations""",
             },
-            {"name": "Users", "description": "User management and profiles"},
+            {
+                "name": "Users",
+                "description": """User management and profiles.
+
+**Roles:** admin, user
+**Features:** User CRUD, role management, organization membership
+
+**Key Operations:** Create, update, delete, list users within organizations""",
+            },
             {
                 "name": "Folders",
-                "description": "Document organization and folder management",
+                "description": """Document organization and folder management.
+
+**Features:** Hierarchical folder structure, folder statistics, tree view
+
+**Key Operations:** Create, update, delete, list folders, get folder tree""",
+            },
+            {
+                "name": "Audit",
+                "description": """Audit logging and activity tracking.
+
+**Tracked Events:** CREATE, UPDATE, DELETE, LOGIN, LOGOUT, UPLOAD, DOWNLOAD, MOVE
+**Entity Types:** ORGANIZATION, USER, FOLDER, DOCUMENT
+
+**Access Control:** Admins see all logs, users see only their activity""",
             },
             {
                 "name": "Health",
-                "description": "API health checks and status monitoring",
+                "description": """API health checks and status monitoring.
+
+**Endpoints:**
+- `/health` - Basic health check
+- `/status` - Detailed service status
+- `/ready` - Kubernetes readiness probe
+- `/live` - Kubernetes liveness probe""",
             },
         ],
     )
@@ -262,6 +327,7 @@ def custom_openapi():
 
     # Add examples to components
     openapi_schema["components"]["examples"] = {
+        # Authentication Examples
         "LoginRequest": {
             "summary": "Login request",
             "value": {"email": "user@example.com", "password": "Password123!"},
@@ -284,6 +350,8 @@ def custom_openapi():
                 "token_type": "bearer",
                 "expires_in": 86400,
                 "refresh_expires_in": 86400,
+                "access_token_expires_at": "2025-08-16T10:12:27.931957",
+                "refresh_token_expires_at": "2025-08-16T10:12:27.931957",
                 "user": {
                     "user_id": "jhYXgm0s4avwacnBSXH9",
                     "email": "user@example.com",
@@ -296,19 +364,153 @@ def custom_openapi():
                 },
             },
         },
+        # User Examples
+        "UserResponse": {
+            "summary": "User response",
+            "value": {
+                "id": "jhYXgm0s4avwacnBSXH9",
+                "email": "john.doe@example.com",
+                "username": "johndoe",
+                "full_name": "John Doe",
+                "role": "user",
+                "org_id": "oJIChgDgktkF30dAPy2c",
+                "is_active": True,
+                "created_at": "2025-08-15T10:12:36.993659",
+                "updated_at": "2025-08-15T10:12:36.993662",
+            },
+        },
+        "UserList": {
+            "summary": "Users list with pagination",
+            "value": {
+                "users": [
+                    {
+                        "id": "jhYXgm0s4avwacnBSXH9",
+                        "email": "john.doe@example.com",
+                        "username": "johndoe",
+                        "full_name": "John Doe",
+                        "role": "user",
+                        "org_id": "oJIChgDgktkF30dAPy2c",
+                        "is_active": True,
+                    }
+                ],
+                "total": 25,
+                "page": 1,
+                "per_page": 20,
+                "total_pages": 2,
+            },
+        },
+        # Organization Examples
+        "OrganizationResponse": {
+            "summary": "Organization response",
+            "value": {
+                "id": "oJIChgDgktkF30dAPy2c",
+                "name": "Acme Corporation",
+                "domain": "acme.com",
+                "settings": {"timezone": "America/New_York", "default_language": "en"},
+                "plan_type": "starter",
+                "is_active": True,
+                "created_at": "2025-08-15T05:31:35.921520",
+                "updated_at": "2025-08-15T05:31:35.921523",
+            },
+        },
+        "OrganizationList": {
+            "summary": "Organizations list with pagination",
+            "value": {
+                "organizations": [
+                    {
+                        "id": "oJIChgDgktkF30dAPy2c",
+                        "name": "Acme Corporation",
+                        "domain": "acme.com",
+                        "plan_type": "starter",
+                        "is_active": True,
+                    }
+                ],
+                "total": 10,
+                "page": 1,
+                "per_page": 20,
+                "total_pages": 1,
+            },
+        },
+        # Folder Examples
+        "FolderResponse": {
+            "summary": "Folder response",
+            "value": {
+                "id": "folder_xyz789",
+                "name": "invoices",
+                "path": "/invoices",
+                "parent_id": None,
+                "org_id": "oJIChgDgktkF30dAPy2c",
+                "depth": 0,
+                "is_active": True,
+                "created_at": "2025-08-15T10:12:36.993659",
+                "updated_at": "2025-08-15T10:12:36.993662",
+            },
+        },
+        "FolderTree": {
+            "summary": "Folder tree structure",
+            "value": {
+                "id": "root_folder",
+                "name": "Root",
+                "path": "/",
+                "children": [
+                    {
+                        "id": "folder_invoices",
+                        "name": "invoices",
+                        "path": "/invoices",
+                        "children": [
+                            {
+                                "id": "folder_2025",
+                                "name": "2025",
+                                "path": "/invoices/2025",
+                                "children": [],
+                            }
+                        ],
+                    },
+                    {
+                        "id": "folder_contracts",
+                        "name": "contracts",
+                        "path": "/contracts",
+                        "children": [],
+                    },
+                ],
+            },
+        },
+        # Document Examples
         "DocumentUpload": {
             "summary": "Document upload response",
             "value": {
                 "success": True,
                 "message": "Document uploaded successfully",
                 "document": {
-                    "id": "doc-123",
-                    "filename": "invoice.pdf",
+                    "id": "78258b82-db53-41a3-848a-ce45a32f99c7",
+                    "filename": "invoice-2025-001.pdf",
                     "file_type": "pdf",
                     "file_size": 1024567,
-                    "status": "uploaded",
-                    "created_at": "2025-08-15T10:12:36Z",
+                    "status": "uploading",
+                    "storage_path": "Google/original/invoices/invoice-2025-001.pdf",
+                    "org_id": "oJIChgDgktkF30dAPy2c",
+                    "uploaded_by": "jhYXgm0s4avwacnBSXH9",
+                    "created_at": "2025-08-15T10:12:36.993659",
                 },
+                "upload_time_ms": 234,
+            },
+        },
+        "DocumentResponse": {
+            "summary": "Document details",
+            "value": {
+                "id": "78258b82-db53-41a3-848a-ce45a32f99c7",
+                "filename": "invoice-2025-001.pdf",
+                "original_filename": "invoice-2025-001.pdf",
+                "file_type": "pdf",
+                "file_size": 1024567,
+                "storage_path": "Google/original/invoices/invoice-2025-001.pdf",
+                "status": "uploaded",
+                "metadata": {"category": "invoice", "vendor": "Acme Corp"},
+                "org_id": "oJIChgDgktkF30dAPy2c",
+                "uploaded_by": "jhYXgm0s4avwacnBSXH9",
+                "is_active": True,
+                "created_at": "2025-08-15T10:12:36.993659",
+                "updated_at": "2025-08-15T10:12:36.993662",
             },
         },
         "DocumentList": {
@@ -316,34 +518,109 @@ def custom_openapi():
             "value": {
                 "documents": [
                     {
-                        "id": "doc-123",
-                        "filename": "invoice.pdf",
+                        "id": "78258b82-db53-41a3-848a-ce45a32f99c7",
+                        "filename": "invoice-2025-001.pdf",
                         "file_type": "pdf",
                         "file_size": 1024567,
                         "status": "uploaded",
-                        "created_at": "2025-08-15T10:12:36Z",
+                        "storage_path": "Google/original/invoices/invoice-2025-001.pdf",
+                        "created_at": "2025-08-15T10:12:36.993659",
                     }
                 ],
-                "total": 15,
+                "total": 45,
                 "page": 1,
                 "per_page": 10,
+                "total_pages": 5,
             },
         },
+        "DocumentDownload": {
+            "summary": "Document download URL response",
+            "value": {
+                "success": True,
+                "document_id": "78258b82-db53-41a3-848a-ce45a32f99c7",
+                "filename": "invoice-2025-001.pdf",
+                "download_url": "https://storage.googleapis.com/bucket/path?X-Goog-Algorithm=...",
+                "expires_at": "2025-08-15T11:12:36.993659",
+                "file_size": 1024567,
+                "content_type": "application/pdf",
+            },
+        },
+        # Audit Examples
+        "AuditLogEntry": {
+            "summary": "Single audit log entry",
+            "value": {
+                "id": "audit_123",
+                "org_id": "oJIChgDgktkF30dAPy2c",
+                "action": "UPLOAD",
+                "entity_type": "DOCUMENT",
+                "entity_id": "78258b82-db53-41a3-848a-ce45a32f99c7",
+                "user_id": "jhYXgm0s4avwacnBSXH9",
+                "details": {"filename": "invoice.pdf", "file_size": 1024567},
+                "ip_address": "192.168.1.1",
+                "user_agent": "Mozilla/5.0...",
+                "created_at": "2025-08-15T10:12:36.993659",
+            },
+        },
+        "AuditLogList": {
+            "summary": "Audit logs list with pagination",
+            "value": {
+                "logs": [
+                    {
+                        "id": "audit_123",
+                        "action": "UPLOAD",
+                        "entity_type": "DOCUMENT",
+                        "entity_id": "78258b82-db53-41a3-848a-ce45a32f99c7",
+                        "user_id": "jhYXgm0s4avwacnBSXH9",
+                        "created_at": "2025-08-15T10:12:36.993659",
+                    }
+                ],
+                "total": 150,
+                "page": 1,
+                "per_page": 50,
+                "total_pages": 3,
+            },
+        },
+        # Error Examples
+        "NotFoundError": {
+            "summary": "Resource not found error",
+            "value": {
+                "detail": "Document with ID '78258b82-db53-41a3-848a-ce45a32f99c7' not found"
+            },
+        },
+        "ValidationError": {
+            "summary": "Validation error",
+            "value": {
+                "detail": [
+                    {
+                        "loc": ["body", "email"],
+                        "msg": "value is not a valid email address",
+                        "type": "value_error.email",
+                    }
+                ]
+            },
+        },
+        "ConflictError": {
+            "summary": "Conflict error (duplicate resource)",
+            "value": {"detail": "User with this email already exists in this organization"},
+        },
+        "UnauthorizedError": {
+            "summary": "Unauthorized error",
+            "value": {"detail": "Invalid or expired session token"},
+        },
+        "ForbiddenError": {
+            "summary": "Forbidden error",
+            "value": {"detail": "Admin access required to perform this operation"},
+        },
         "ErrorResponse": {
-            "summary": "Error response",
+            "summary": "Structured error response",
             "value": {
                 "error": {
-                    "code": "VALIDATION_ERROR",
-                    "message": "Invalid email format",
-                    "error_id": "unique-error-identifier",
+                    "code": "TOKEN_EXPIRED",
+                    "message": "Access token has expired",
+                    "error_id": "abc123-unique-id",
                     "details": {
-                        "field_errors": [
-                            {
-                                "field": "email",
-                                "message": "Invalid email format",
-                                "type": "format_error",
-                            }
-                        ]
+                        "expired_at": "2025-08-17T08:00:00Z",
+                        "action": "refresh_token_or_relogin",
                     },
                 }
             },
@@ -497,6 +774,7 @@ async def detailed_status() -> Dict[str, Any]:
                     "pool_size": settings.DB_POOL_SIZE,
                     "max_overflow": settings.DB_MAX_OVERFLOW,
                 },
+                "cache": get_cache_status(),
             },
             "configuration": {
                 "cors_enabled": True,

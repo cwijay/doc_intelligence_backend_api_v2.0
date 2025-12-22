@@ -34,10 +34,12 @@ share/python-wheels/
 MANIFEST
 
 .env.production
+.gitignore
 
 # PyInstaller
 *.manifest
 *.spec
+.ruff_cache
 
 # Installer logs
 pip-log.txt

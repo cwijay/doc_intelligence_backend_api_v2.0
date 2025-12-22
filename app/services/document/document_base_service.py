@@ -10,7 +10,7 @@ This service provides the foundation for all document services with:
 """
 
 from typing import Optional
-from app.core.db_client import db
+from biz2bricks_core import db
 from app.core.logging import get_service_logger
 from app.models.document import FileType
 
@@ -34,6 +34,14 @@ class DocumentUploadError(Exception):
     pass
 
 
+class DocumentDuplicateError(Exception):
+    """Document with same name already exists in folder."""
+
+    def __init__(self, message: str, existing_document: dict):
+        super().__init__(message)
+        self.existing_document = existing_document
+
+
 class DocumentBaseService:
     """Base service with common functionality shared across all document services."""
 
@@ -43,7 +51,21 @@ class DocumentBaseService:
 
         # File constraints
         self.max_file_size = 50 * 1024 * 1024  # 50MB
-        self.allowed_file_types = {FileType.PDF, FileType.XLSX}
+        self.allowed_file_types = {
+            FileType.PDF,
+            FileType.XLSX,
+            FileType.CSV,
+            FileType.JPEG,
+            FileType.PNG,
+            FileType.DOCX,
+            FileType.DOC,
+            FileType.PPTX,
+            FileType.PPT,
+            FileType.TXT,
+            FileType.GIF,
+            FileType.WEBP,
+            FileType.TIFF,
+        }
         self.max_path_length = 1024  # Maximum storage path length
 
         # Import here to avoid circular imports

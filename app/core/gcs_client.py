@@ -1,4 +1,5 @@
 import os
+import asyncio
 from typing import Optional, List, Tuple, Dict, Any
 from functools import lru_cache
 from datetime import datetime, timezone
@@ -318,6 +319,31 @@ class GCSClient:
                 error=str(e),
             )
             raise GCSClientError(f"Failed to move folder structure: {e}")
+
+    # Async versions of folder structure methods for use in async contexts
+    async def create_folder_structure_async(
+        self, org_name: str, folder_path: str
+    ) -> Dict[str, bool]:
+        """Async version of create_folder_structure using thread pool."""
+        return await asyncio.to_thread(
+            self.create_folder_structure, org_name, folder_path
+        )
+
+    async def delete_folder_structure_async(
+        self, org_name: str, folder_path: str
+    ) -> Dict[str, bool]:
+        """Async version of delete_folder_structure using thread pool."""
+        return await asyncio.to_thread(
+            self.delete_folder_structure, org_name, folder_path
+        )
+
+    async def move_folder_structure_async(
+        self, org_name: str, old_path: str, new_path: str
+    ) -> Dict[str, bool]:
+        """Async version of move_folder_structure using thread pool."""
+        return await asyncio.to_thread(
+            self.move_folder_structure, org_name, old_path, new_path
+        )
 
     def upload_document_file(
         self,

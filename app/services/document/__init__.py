@@ -10,7 +10,6 @@ Services:
 - document_storage_service: GCS operations and storage management
 - document_crud_service: Basic CRUD operations
 - document_query_service: Complex queries and filtering
-- document_sync_service: PostgreSQL-GCS synchronization
 - document_download_service: Download URL generation and file access
 - document_service: Orchestration facade (main interface)
 """

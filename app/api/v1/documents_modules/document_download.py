@@ -31,6 +31,7 @@ router = APIRouter()
     "/{document_id}/download",
     response_model=DocumentDownloadResponse,
     summary="🔗 Get Download URL",
+    operation_id="getDownloadUrl",
     description="""Generate a signed download URL for secure document access.
 
 **Authentication Required:** Session token in `Authorization: Bearer <token>` header
@@ -171,6 +172,7 @@ async def get_download_url(
 @router.get(
     "/{document_id}/download/redirect",
     summary="↪️ Direct Download Redirect",
+    operation_id="downloadDocumentRedirect",
     description="""Direct browser redirect to document download URL.
 
 **Authentication Required:** Session token in `Authorization: Bearer <token>` header

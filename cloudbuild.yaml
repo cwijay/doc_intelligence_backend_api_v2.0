@@ -112,8 +112,9 @@ steps:
           --timeout=60 \
           --port=8080 \
           --service-account=${_SERVICE_ACCOUNT} \
-          --set-env-vars="ENVIRONMENT=${_ENVIRONMENT},GCP_PROJECT_ID=$PROJECT_ID,LOG_LEVEL=${_LOG_LEVEL},LOG_FORMAT=json,GCS_BUCKET_NAME=${_GCS_BUCKET_NAME},FRONTEND_DOMAIN=${_FRONTEND_DOMAIN},PRODUCTION_CORS_ORIGINS=${_PRODUCTION_CORS_ORIGINS},MAX_FILE_SIZE=${_MAX_FILE_SIZE},ALLOWED_FILE_TYPES=${_ALLOWED_FILE_TYPES}" \
-          --update-secrets=JWT_SECRET_KEY=JWT_SECRET_KEY${_SECRET_SUFFIX}:latest
+          --add-cloudsql-instances=${_CLOUD_SQL_INSTANCE} \
+          --set-env-vars="ENVIRONMENT=${_ENVIRONMENT},GCP_PROJECT_ID=$PROJECT_ID,LOG_LEVEL=${_LOG_LEVEL},LOG_FORMAT=json,GCS_BUCKET_NAME=${_GCS_BUCKET_NAME},FRONTEND_DOMAIN=${_FRONTEND_DOMAIN},PRODUCTION_CORS_ORIGINS=${_PRODUCTION_CORS_ORIGINS},MAX_FILE_SIZE=${_MAX_FILE_SIZE},ALLOWED_FILE_TYPES=${_ALLOWED_FILE_TYPES},CLOUD_SQL_INSTANCE=${_CLOUD_SQL_INSTANCE},USE_CLOUD_SQL_CONNECTOR=true,CLOUD_SQL_IP_TYPE=PUBLIC,DATABASE_NAME=${_DATABASE_NAME},DATABASE_USER=${_DATABASE_USER}" \
+          --update-secrets=JWT_SECRET_KEY=JWT_SECRET_KEY${_SECRET_SUFFIX}:latest,DATABASE_PASSWORD=DATABASE_PASSWORD${_SECRET_SUFFIX}:latest
 
         echo "Deployment successful!"
     waitFor: ['push-image']
@@ -155,13 +156,18 @@ steps:
 substitutions:
   # Core settings
   _REGION: 'us-central1'
-  _SERVICE_NAME: 'document-intelligence-api-dev'
+  _SERVICE_NAME: 'document-intelligence-api-dev-v2'
   _ENVIRONMENT: 'development'
   _SECRET_SUFFIX: ''  # Empty for dev, '-prod' for production
 
   # GCP settings
   _GCS_BUCKET_NAME: 'biz2bricks-dev-v1-document-store'
   _SERVICE_ACCOUNT: '727735128283-compute@developer.gserviceaccount.com'
+
+  # Cloud SQL settings
+  _CLOUD_SQL_INSTANCE: 'biz-to-bricks-dev:us-central1:doc-intelligence-db'
+  _DATABASE_NAME: 'doc_intelligence'
+  _DATABASE_USER: 'postgres'
 
   # CORS and domains
   _FRONTEND_DOMAIN: 'dev.biztobricks.com'
@@ -186,7 +192,7 @@ images:
 
 # Tags for build organization
 tags:
-  - 'document-intelligence-api'
+  - 'document-intelligence-api-v2'
   - 'cloud-run-deployment'
 
 # ===========================================

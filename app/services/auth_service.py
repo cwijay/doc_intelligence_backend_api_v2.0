@@ -122,7 +122,9 @@ class AuthService:
 
             # Check if organization is active
             org = await organization_service.get_organization(user.org_id)
-            if not org.is_active:
+            # Handle both dict (from cache) and Pydantic model responses
+            org_is_active = org.get('is_active', False) if isinstance(org, dict) else org.is_active
+            if not org_is_active:
                 self.logger.warning(
                     "Authentication failed - organization inactive",
                     email=email,
@@ -527,7 +529,9 @@ class AuthService:
 
             # Verify organization is still active
             org = await organization_service.get_organization(org_id)
-            if not org.is_active:
+            # Handle both dict (from cache) and Pydantic model responses
+            org_is_active = org.get('is_active', False) if isinstance(org, dict) else org.is_active
+            if not org_is_active:
                 raise AuthenticationError("Organization is inactive")
 
             # Create new access token
@@ -654,7 +658,9 @@ class AuthService:
 
             # Check if organization is active
             org = await organization_service.get_organization(user.org_id)
-            if not org.is_active:
+            # Handle both dict (from cache) and Pydantic model responses
+            org_is_active = org.get('is_active', False) if isinstance(org, dict) else org.is_active
+            if not org_is_active:
                 self.logger.warning(
                     "Authentication failed - organization inactive",
                     email=email,

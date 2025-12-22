@@ -8,7 +8,6 @@ Modules:
 - document_upload: Document upload operations
 - document_management: CRUD operations
 - document_download: Download URL generation
-- document_sync: GCS/PostgreSQL sync validation
 - common: Shared utilities and dependencies
 """
 

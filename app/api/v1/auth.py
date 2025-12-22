@@ -5,7 +5,7 @@ from fastapi import APIRouter, HTTPException, status, Depends, Request
 from pydantic import BaseModel, Field, field_validator
 
 from app.core.logging import get_service_logger
-from app.core.db_models import AuditAction, AuditEntityType
+from biz2bricks_core import AuditAction, AuditEntityType
 from app.services.audit_service import audit_service
 from app.core.simple_auth import (
     get_current_user_dict,
@@ -225,6 +225,7 @@ class LogoutAllResponse(BaseModel):
     response_model=AuthResponse,
     status_code=status.HTTP_200_OK,
     summary="🔐 User Login",
+    operation_id="login",
     description="""Authenticate user with email and password using simple session-based authentication.
     
 **Authentication Flow:**
@@ -437,6 +438,7 @@ async def login(login_request: LoginRequest, request: Request) -> AuthResponse:
     response_model=AuthResponse,
     status_code=status.HTTP_201_CREATED,
     summary="📝 User Registration",
+    operation_id="register",
     description="""Register a new user by selecting an existing organization (MVP flow).
     
 **Registration Flow:**
@@ -600,6 +602,7 @@ async def register(request: RegisterRequest) -> AuthResponse:
     response_model=AuthResponse,
     status_code=status.HTTP_201_CREATED,
     summary="Register user with invitation token",
+    operation_id="registerWithInvitation",
     description="Register a new user using an invitation token. This allows team members to join existing organizations.",
 )
 async def register_with_invitation(request: InviteRegisterRequest) -> AuthResponse:
@@ -669,6 +672,7 @@ async def register_with_invitation(request: InviteRegisterRequest) -> AuthRespon
     response_model=AccessTokenResponse,
     status_code=status.HTTP_200_OK,
     summary="Refresh access token",
+    operation_id="refreshAccessToken",
     description="Get a new access token using a valid refresh token.",
 )
 async def refresh_access_token(request: RefreshTokenRequest) -> AccessTokenResponse:
@@ -731,6 +735,7 @@ security = HTTPBearer()
     response_model=LogoutResponse,
     status_code=status.HTTP_200_OK,
     summary="Logout user",
+    operation_id="logout",
     description="Logout user by invalidating their session token. Session will be invalid for future requests.",
 )
 async def logout(
@@ -825,6 +830,7 @@ async def logout(
     response_model=LogoutAllResponse,
     status_code=status.HTTP_200_OK,
     summary="Logout from all devices",
+    operation_id="logoutAllSessions",
     description="Security feature: Logout user from all devices by invalidating all their active sessions. Useful for security incidents.",
 )
 async def logout_all_sessions(
@@ -930,6 +936,7 @@ async def logout_all_sessions(
     response_model=InvitationTokenResponse,
     status_code=status.HTTP_201_CREATED,
     summary="Create invitation token",
+    operation_id="createInvitation",
     description="Create an invitation token for a new user to join the organization. Requires admin or user permissions.",
 )
 async def create_invitation(
@@ -989,6 +996,7 @@ async def create_invitation(
     response_model=List[OrganizationResponse],
     status_code=status.HTTP_200_OK,
     summary="🏢 List Organizations for Registration",
+    operation_id="listOrganizationsForRegistration",
     description="""List all available organizations for user registration selection.
 
 **Usage:**
@@ -1109,6 +1117,7 @@ async def list_organizations_for_registration() -> List[OrganizationResponse]:
     response_model=List[OrganizationResponse],
     status_code=status.HTTP_200_OK,
     summary="Lookup organizations",
+    operation_id="lookupOrganizations",
     description="Search for organizations by name. Used during login to help users find their organization.",
 )
 async def lookup_organizations(
@@ -1161,6 +1170,7 @@ async def lookup_organizations(
     response_model=Dict[str, Any],
     status_code=status.HTTP_200_OK,
     summary="Check organization name availability",
+    operation_id="checkOrganizationAvailability",
     description="Check if an organization name is available for registration.",
 )
 async def check_organization_availability(
@@ -1227,6 +1237,7 @@ async def check_organization_availability(
     "/validate",
     response_model=Dict[str, Any],
     summary="Validate access token",
+    operation_id="validateToken",
     description="Validate the current session token and return expiration information for the frontend.",
 )
 async def validate_token(
@@ -1291,6 +1302,7 @@ async def validate_token(
     "/refresh-session",
     response_model=AuthResponse,
     summary="Refresh session token",
+    operation_id="refreshSession",
     description="Refresh the session using a refresh token to get new access and refresh tokens.",
 )
 async def refresh_session_token(request: RefreshTokenRequest) -> AuthResponse:

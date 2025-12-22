@@ -16,9 +16,9 @@ from app.models.schemas import (
     PaginationParams,
     OrganizationFilters,
 )
-from app.core.db_client import db
-from app.core.db_models import OrganizationModel, AuditAction, AuditEntityType
+from biz2bricks_core import db, OrganizationModel, AuditAction, AuditEntityType
 from app.core.logging import get_service_logger
+from app.core.cache import cached_organizations, invalidate_organization
 from app.services.audit_service import audit_service
 
 logger = get_service_logger("organization")
@@ -54,6 +54,18 @@ class OrganizationService:
             created_at=model.created_at,
             updated_at=model.updated_at,
         )
+
+    def _ensure_response_model(
+        self, data: OrganizationResponse | dict
+    ) -> OrganizationResponse:
+        """Ensure cached data is converted back to Pydantic model.
+
+        fastapi-cache2 serializes responses to JSON dicts when caching.
+        This method ensures we always return a proper Pydantic model.
+        """
+        if isinstance(data, dict):
+            return OrganizationResponse.model_validate(data)
+        return data
 
     async def create_organization(
         self,
@@ -162,11 +174,17 @@ class OrganizationService:
             org_id: Organization ID
 
         Returns:
-            Organization response
+            Organization response (cached for 30 minutes)
 
         Raises:
             OrganizationNotFoundError: If organization not found
         """
+        result = await self._get_organization_cached(org_id)
+        return self._ensure_response_model(result)
+
+    @cached_organizations()
+    async def _get_organization_cached(self, org_id: str) -> OrganizationResponse:
+        """Internal cached method for fetching organization."""
         try:
             async with db.session() as session:
                 stmt = select(OrganizationModel).where(
@@ -284,6 +302,9 @@ class OrganizationService:
                             "old": old_values.get(key),
                             "new": new_values.get(key),
                         }
+
+                # Invalidate cache
+                asyncio.create_task(invalidate_organization(org_id))
 
                 # Audit logging (non-blocking)
                 asyncio.create_task(
@@ -454,6 +475,9 @@ class OrganizationService:
                 self.logger.info(
                     "Organization deleted", org_id=org_id, name=org_model.name
                 )
+
+                # Invalidate cache
+                asyncio.create_task(invalidate_organization(org_id))
 
                 # Audit logging (non-blocking)
                 asyncio.create_task(

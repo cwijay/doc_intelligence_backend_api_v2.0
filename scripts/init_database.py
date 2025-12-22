@@ -54,8 +54,7 @@ else:
 
 async def init_tables():
     """Create all database tables."""
-    from app.core.db_client import db
-    from app.core.db_models import Base
+    from biz2bricks_core import db, Base
 
     logger.info("=== PostgreSQL Database Initialization ===")
 
@@ -106,8 +105,7 @@ async def init_tables():
 
 async def drop_tables():
     """Drop all tables (use with caution!)."""
-    from app.core.db_client import db
-    from app.core.db_models import Base
+    from biz2bricks_core import db, Base
 
     logger.warning("=== WARNING: Dropping All Tables ===")
 
@@ -126,7 +124,7 @@ async def drop_tables():
 
 async def show_status():
     """Show database status and table information."""
-    from app.core.db_client import db
+    from biz2bricks_core import db
 
     logger.info("=== Database Status ===")
 

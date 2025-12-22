@@ -16,7 +16,7 @@ from sqlalchemy import select
 
 from app.models.document import Document, DocumentStatus, FileType
 from app.core.gcs_client import gcs_client
-from app.core.db_models import DocumentModel
+from biz2bricks_core import DocumentModel
 from .document_base_service import DocumentBaseService
 
 
@@ -58,6 +58,66 @@ class DocumentStorageService(DocumentBaseService):
             )
             # On error, assume it exists to be safe
             return True
+
+    async def check_duplicate_filename(
+        self, org_id: str, folder_id: str | None, original_filename: str
+    ) -> dict | None:
+        """
+        Check if a document with the same original filename exists in the folder.
+
+        Args:
+            org_id: Organization ID
+            folder_id: Folder ID (None for root folder)
+            original_filename: Original filename to check
+
+        Returns:
+            Dictionary with existing document info if duplicate exists, None otherwise
+        """
+        try:
+            async with self.db.session() as session:
+                stmt = (
+                    select(DocumentModel)
+                    .where(
+                        DocumentModel.organization_id == org_id,
+                        DocumentModel.folder_id == folder_id,
+                        DocumentModel.original_filename == original_filename,
+                        DocumentModel.is_active == True,
+                    )
+                    .limit(1)
+                )
+                result = await session.execute(stmt)
+                existing = result.scalar_one_or_none()
+
+                if existing:
+                    self.logger.info(
+                        "Duplicate filename found",
+                        org_id=org_id,
+                        folder_id=folder_id,
+                        original_filename=original_filename,
+                        existing_doc_id=existing.id,
+                    )
+                    return {
+                        "id": existing.id,
+                        "filename": existing.original_filename,
+                        "created_at": (
+                            existing.created_at.isoformat()
+                            if existing.created_at
+                            else None
+                        ),
+                        "uploaded_by": existing.uploaded_by,
+                    }
+                return None
+
+        except Exception as e:
+            self.logger.error(
+                "Error checking duplicate filename",
+                org_id=org_id,
+                folder_id=folder_id,
+                original_filename=original_filename,
+                error=str(e),
+            )
+            # On error, return None to allow upload (fail open for this check)
+            return None
 
     def _generate_unique_storage_path(
         self, base_storage_path: str, filename: str
@@ -112,59 +172,27 @@ class DocumentStorageService(DocumentBaseService):
         self, org_id: str, storage_path: str, filename: str
     ) -> str:
         """
-        Ensure the storage path is unique by checking PostgreSQL and generating alternatives if needed.
+        Return the original storage path - duplicates are handled via silent overwrite.
+
+        The system now uses silent overwrite behavior:
+        - If a file with the same path exists, it will be overwritten in GCS
+        - The old PostgreSQL record is soft-deleted before creating the new one
+        - No timestamp suffixes are added to filenames
 
         Args:
             org_id: Organization ID
             storage_path: Desired storage path
-            filename: Original filename for fallback
+            filename: Original filename (unused, kept for API compatibility)
 
         Returns:
-            Guaranteed unique storage path
+            The original storage path (no modifications)
         """
-        original_path = storage_path
-
-        # Check if original path is available
-        if not await self._check_storage_path_exists(org_id, storage_path):
-            self.logger.debug(
-                "Storage path is available", org_id=org_id, storage_path=storage_path
-            )
-            return storage_path
-
-        # Original path exists, generate unique alternative
-        self.logger.info(
-            "Storage path already exists, generating unique alternative",
+        self.logger.debug(
+            "Using original storage path (silent overwrite mode)",
             org_id=org_id,
-            original_path=original_path,
+            storage_path=storage_path,
         )
-
-        max_attempts = 10
-        for attempt in range(max_attempts):
-            unique_path = self._generate_unique_storage_path(storage_path, filename)
-
-            if not await self._check_storage_path_exists(org_id, unique_path):
-                self.logger.info(
-                    "Generated unique storage path",
-                    org_id=org_id,
-                    original_path=original_path,
-                    unique_path=unique_path,
-                    attempt=attempt + 1,
-                )
-                return unique_path
-
-            # Path still exists, try again with different base
-            storage_path = unique_path
-
-        # This should never happen, but provide ultimate fallback
-        fallback_path = self._generate_unique_storage_path(original_path, filename)
-        self.logger.warning(
-            "Used fallback unique path generation",
-            org_id=org_id,
-            original_path=original_path,
-            fallback_path=fallback_path,
-        )
-
-        return fallback_path
+        return storage_path
 
     async def _enrich_document_metadata(self, document: Document) -> Document:
         """

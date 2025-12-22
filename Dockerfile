@@ -43,7 +43,6 @@ RUN uv sync --frozen --no-cache --no-dev
 COPY app/ ./app/
 
 # Copy additional scripts that might be needed
-COPY create_firestore_indexes.py ./
 COPY setup_gcp_bucket.py ./
 
 # Create necessary directories and set permissions

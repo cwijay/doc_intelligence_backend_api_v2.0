@@ -190,7 +190,6 @@ class TestDocumentServiceFacade:
         assert hasattr(service, 'storage_service')
         assert hasattr(service, 'crud_service')
         assert hasattr(service, 'query_service')
-        assert hasattr(service, 'sync_service')
         assert hasattr(service, 'download_service')
 
 
@@ -453,56 +452,6 @@ class TestDocumentServiceDownloadDelegation:
             # Verify expiration_minutes was passed
             call_kwargs = mock_download.call_args.kwargs
             assert call_kwargs['expiration_minutes'] == 120
-
-
-class TestDocumentServiceSyncDelegation:
-    """Tests for sync operation delegation."""
-
-    @pytest.mark.unit
-    @pytest.mark.asyncio
-    async def test_validate_sync_delegates(self):
-        """Test validate_sync delegates to sync service."""
-        from app.services.document.document_service import DocumentService
-
-        service = DocumentService()
-        org_id = str(uuid.uuid4())
-
-        expected_result = {"status": "synced", "errors": []}
-
-        with patch.object(
-            service.sync_service,
-            'validate_sync',
-            return_value=expected_result
-        ) as mock_sync:
-            result = await service.validate_sync(org_id)
-
-            assert result == expected_result
-            mock_sync.assert_called_once()
-
-    @pytest.mark.unit
-    @pytest.mark.asyncio
-    async def test_sync_content_to_database_delegates(self):
-        """Test sync_content_to_database delegates to sync service."""
-        from app.services.document.document_service import DocumentService
-
-        service = DocumentService()
-        org_id = str(uuid.uuid4())
-        doc_id = str(uuid.uuid4())
-        user_id = str(uuid.uuid4())
-
-        expected_result = {"success": True}
-
-        with patch.object(
-            service.sync_service,
-            'sync_content_to_database',
-            return_value=expected_result
-        ) as mock_sync:
-            result = await service.sync_content_to_database(
-                org_id, doc_id, "content", user_id
-            )
-
-            assert result == expected_result
-            mock_sync.assert_called_once()
 
 
 class TestDocumentServiceGlobalInstance:

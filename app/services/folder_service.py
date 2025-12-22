@@ -16,8 +16,8 @@ from app.models.schemas import (
     PaginationParams,
     FolderFilters,
 )
-from app.core.db_client import db
-from app.core.db_models import (
+from biz2bricks_core import (
+    db,
     FolderModel,
     OrganizationModel,
     AuditAction,
@@ -25,6 +25,7 @@ from app.core.db_models import (
 )
 from app.core.gcs_client import gcs_client, GCSClientError
 from app.core.logging import get_service_logger
+from app.core.cache import cached_folders, invalidate_folders
 from app.services.audit_service import audit_service
 
 logger = get_service_logger("folder")
@@ -71,6 +72,16 @@ class FolderService:
             created_at=model.created_at,
             updated_at=model.updated_at,
         )
+
+    def _ensure_response_model(self, data: FolderResponse | dict) -> FolderResponse:
+        """Ensure cached data is converted back to Pydantic model.
+
+        fastapi-cache2 serializes responses to JSON dicts when caching.
+        This method ensures we always return a proper Pydantic model.
+        """
+        if isinstance(data, dict):
+            return FolderResponse.model_validate(data)
+        return data
 
     async def _get_organization_name(self, org_id: str) -> str:
         """Get organization name from organization ID."""
@@ -174,7 +185,7 @@ class FolderService:
                     folder_path = full_path.lstrip("/")
 
                     try:
-                        gcs_result = gcs_client.create_folder_structure(
+                        gcs_result = await gcs_client.create_folder_structure_async(
                             org_name, folder_path
                         )
                         self.logger.info(
@@ -223,6 +234,9 @@ class FolderService:
                     path=folder.path,
                 )
 
+                # Invalidate folder cache
+                asyncio.create_task(invalidate_folders(org_id))
+
                 # Audit logging (non-blocking)
                 asyncio.create_task(
                     audit_service.log_event(
@@ -262,11 +276,17 @@ class FolderService:
             folder_id: Folder ID
 
         Returns:
-            Folder response
+            Folder response (cached for 5 minutes)
 
         Raises:
             FolderNotFoundError: If folder not found
         """
+        result = await self._get_folder_cached(org_id, folder_id)
+        return self._ensure_response_model(result)
+
+    @cached_folders()
+    async def _get_folder_cached(self, org_id: str, folder_id: str) -> FolderResponse:
+        """Internal cached method for fetching folder."""
         try:
             async with db.session() as session:
                 stmt = select(FolderModel).where(
@@ -515,7 +535,7 @@ class FolderService:
                         org_name = await self._get_organization_name(org_id)
                         old_gcs_path = old_path.lstrip("/")
                         new_gcs_path = new_path.lstrip("/")
-                        gcs_client.move_folder_structure(
+                        await gcs_client.move_folder_structure_async(
                             org_name, old_gcs_path, new_gcs_path
                         )
                         self.logger.info(
@@ -555,6 +575,9 @@ class FolderService:
                     old_path=old_path,
                     new_path=new_path,
                 )
+
+                # Invalidate folder cache
+                asyncio.create_task(invalidate_folders(org_id))
 
                 # Audit logging (non-blocking)
                 asyncio.create_task(
@@ -635,7 +658,9 @@ class FolderService:
                     try:
                         org_name = await self._get_organization_name(org_id)
                         gcs_path = folder_path.lstrip("/")
-                        gcs_client.delete_folder_structure(org_name, gcs_path)
+                        await gcs_client.delete_folder_structure_async(
+                            org_name, gcs_path
+                        )
                         deleted_from_gcs = True
                         self.logger.info(
                             "Deleted GCS folder structure",
@@ -676,6 +701,9 @@ class FolderService:
                     folder_id=folder_id,
                     deleted_folders=deleted_folders,
                 )
+
+                # Invalidate folder cache
+                asyncio.create_task(invalidate_folders(org_id))
 
                 # Audit logging (non-blocking)
                 asyncio.create_task(

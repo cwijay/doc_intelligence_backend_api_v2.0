@@ -7,7 +7,6 @@ following SOLID principles by organizing functionality into focused sub-modules:
 - document_upload.py: Document upload operations
 - document_management.py: CRUD operations (list, get, update, delete)
 - document_download.py: Download URL generation and redirects
-- document_sync.py: Sync validation and database queries
 - common.py: Shared utilities and dependencies
 
 Each sub-module follows the Single Responsibility Principle and provides
@@ -20,7 +19,6 @@ from fastapi import APIRouter
 from app.api.v1.documents_modules.document_upload import router as upload_router
 from app.api.v1.documents_modules.document_management import router as management_router
 from app.api.v1.documents_modules.document_download import router as download_router
-from app.api.v1.documents_modules.document_sync import router as sync_router
 from app.api.v1.documents_modules.common import logger
 
 # Create main router
@@ -35,12 +33,7 @@ router.include_router(
     tags=["Document Upload"],
 )
 
-# 2. Sync router with specific paths (must come before /{document_id})
-router.include_router(
-    sync_router,
-    tags=["Document Sync"],
-)
-
+# 2. Download router with specific paths (must come before /{document_id})
 router.include_router(
     download_router,
     tags=["Document Download"],
@@ -71,7 +64,7 @@ async def documents_health_check():
     """
     try:
         from app.core.gcs_client import gcs_client
-        from app.core.db_client import db
+        from biz2bricks_core import db
 
         # Check database connection
         db_healthy = await db.test_connection(timeout=5.0)
@@ -88,7 +81,6 @@ async def documents_health_check():
                 "upload": "Available",
                 "management": "Available",
                 "download": "Available",
-                "sync": "Available",
             },
         }
 
@@ -108,7 +100,6 @@ async def documents_health_check():
                 "download": (
                     "Limited" if not health_status["components"]["gcs"] else "Available"
                 ),
-                "sync": "Limited" if not all_healthy else "Available",
             }
 
         return health_status
@@ -124,7 +115,6 @@ async def documents_health_check():
                 "upload": "Unavailable",
                 "management": "Unavailable",
                 "download": "Unavailable",
-                "sync": "Unavailable",
             },
         }
 
@@ -187,20 +177,6 @@ async def documents_info():
                     "Download security",
                 ],
             },
-            "document_sync": {
-                "description": "Sync validation and database queries",
-                "endpoints": [
-                    "GET /sync/validate",
-                    "GET /by-filename/{filename}",
-                    "GET /by-folder-name/{folder_name}",
-                ],
-                "responsibilities": [
-                    "PostgreSQL-GCS sync validation",
-                    "Database-first document queries",
-                    "Folder-based document listing",
-                    "Data consistency monitoring",
-                ],
-            },
             "common": {
                 "description": "Shared utilities and dependencies",
                 "exports": [
@@ -225,8 +201,8 @@ async def documents_info():
             "Comprehensive documentation per module",
             "Easier onboarding for new developers",
         ],
-        "total_endpoints": 10,
+        "total_endpoints": 7,
         "original_file_size": "2,820 lines",
-        "refactored_structure": "5 focused modules + 1 aggregator",
+        "refactored_structure": "4 focused modules + 1 aggregator",
         "documentation": "Each module includes comprehensive docstrings and API documentation",
     }

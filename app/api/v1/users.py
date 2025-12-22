@@ -17,6 +17,11 @@ from app.models.schemas import (
     PaginationParams,
     UserFilters,
     UserRole,
+    UserStatsResponse,
+    NotFoundErrorResponse,
+    ConflictErrorResponse,
+    ValidationErrorResponse,
+    InternalServerErrorResponse,
 )
 
 logger = get_service_logger("user_api")
@@ -28,8 +33,35 @@ router = APIRouter()
     "/organizations/{org_id}/users",
     response_model=UserResponse,
     status_code=status.HTTP_201_CREATED,
-    summary="Create a new user in organization",
-    description="Create a new user within the specified organization. Email and username must be unique within the organization.",
+    summary="Create User",
+    operation_id="createUser",
+    description="""Create a new user within the specified organization.
+
+**Authentication Required:** Yes (Admin role recommended)
+
+**Validation Rules:**
+- Email must be valid and unique within the organization
+- Username must be unique within organization (3-50 chars, alphanumeric + underscore/hyphen)
+- Password minimum 8 characters with complexity requirements
+- Full name 2-100 characters
+
+**Example Request:**
+```json
+{
+  "email": "john.doe@example.com",
+  "password": "SecureP@ss123!",
+  "username": "johndoe",
+  "full_name": "John Doe",
+  "role": "user"
+}
+```""",
+    responses={
+        201: {"description": "User created successfully"},
+        404: {"model": NotFoundErrorResponse, "description": "Organization not found"},
+        409: {"model": ConflictErrorResponse, "description": "User with email or username already exists"},
+        422: {"model": ValidationErrorResponse, "description": "Validation error"},
+        500: {"model": InternalServerErrorResponse, "description": "Internal server error"},
+    },
 )
 async def create_user(
     org_id: str = Path(..., description="Organization ID"),
@@ -91,8 +123,18 @@ async def create_user(
 @router.get(
     "/organizations/{org_id}/users/{user_id}",
     response_model=UserResponse,
-    summary="Get user by ID",
-    description="Retrieve a specific user by their ID within the organization.",
+    summary="Get User",
+    operation_id="getUser",
+    description="""Retrieve a specific user by their ID within the organization.
+
+**Authentication Required:** Yes
+
+Returns the user's profile information including email, username, full name, role, and timestamps.""",
+    responses={
+        200: {"description": "User retrieved successfully"},
+        404: {"model": NotFoundErrorResponse, "description": "Organization or user not found"},
+        500: {"model": InternalServerErrorResponse, "description": "Internal server error"},
+    },
 )
 async def get_user(
     org_id: str = Path(..., description="Organization ID"),
@@ -140,8 +182,28 @@ async def get_user(
 @router.put(
     "/organizations/{org_id}/users/{user_id}",
     response_model=UserResponse,
-    summary="Update user",
-    description="Update an existing user's details within the organization. Only provided fields will be updated.",
+    summary="Update User",
+    operation_id="updateUser",
+    description="""Update an existing user's details within the organization.
+
+**Authentication Required:** Yes (Admin role or self-update)
+
+Only provided fields will be updated. All fields are optional.
+
+**Example Request:**
+```json
+{
+  "full_name": "John D. Doe",
+  "role": "admin"
+}
+```""",
+    responses={
+        200: {"description": "User updated successfully"},
+        404: {"model": NotFoundErrorResponse, "description": "Organization or user not found"},
+        409: {"model": ConflictErrorResponse, "description": "Email or username already taken"},
+        422: {"model": ValidationErrorResponse, "description": "Validation error"},
+        500: {"model": InternalServerErrorResponse, "description": "Internal server error"},
+    },
 )
 async def update_user(
     org_id: str = Path(..., description="Organization ID"),
@@ -212,8 +274,27 @@ async def update_user(
 @router.get(
     "/organizations/{org_id}/users",
     response_model=UserList,
-    summary="List users in organization",
-    description="Retrieve a paginated list of users within the organization with optional filtering.",
+    summary="List Users",
+    operation_id="listUsers",
+    description="""Retrieve a paginated list of users within the organization with optional filtering.
+
+**Authentication Required:** Yes
+
+**Query Parameters:**
+- `page`: Page number (starts from 1)
+- `per_page`: Items per page (max 100)
+- `email`: Filter by email (partial match)
+- `username`: Filter by username (partial match)
+- `full_name`: Filter by full name (partial match)
+- `role`: Filter by role (admin/user/viewer)
+- `is_active`: Filter by active status (true/false)
+
+**Example:** `/organizations/org_123/users?page=1&per_page=20&role=user`""",
+    responses={
+        200: {"description": "Users retrieved successfully"},
+        404: {"model": NotFoundErrorResponse, "description": "Organization not found"},
+        500: {"model": InternalServerErrorResponse, "description": "Internal server error"},
+    },
 )
 async def list_users(
     org_id: str = Path(..., description="Organization ID"),
@@ -293,8 +374,20 @@ async def list_users(
 @router.delete(
     "/organizations/{org_id}/users/{user_id}",
     response_model=UserDeleteResponse,
-    summary="Delete user",
-    description="Soft delete a user by setting them as inactive within the organization. This operation cannot be undone via API.",
+    summary="Delete User",
+    operation_id="deleteUser",
+    description="""Soft delete a user by setting them as inactive within the organization.
+
+**Authentication Required:** Yes (Admin role)
+
+**Important:** This performs a soft delete by marking the user as inactive.
+The user data is preserved but will not appear in normal queries.
+This operation cannot be undone via API.""",
+    responses={
+        200: {"description": "User deleted successfully"},
+        404: {"model": NotFoundErrorResponse, "description": "Organization or user not found"},
+        500: {"model": InternalServerErrorResponse, "description": "Internal server error"},
+    },
 )
 async def delete_user(
     org_id: str = Path(..., description="Organization ID"),
@@ -359,8 +452,18 @@ async def delete_user(
 @router.get(
     "/organizations/{org_id}/users/search/by-email/{email}",
     response_model=UserResponse,
-    summary="Get user by email",
-    description="Retrieve a user by their email address within the organization.",
+    summary="Get User by Email",
+    operation_id="getUserByEmail",
+    description="""Retrieve a user by their email address within the organization.
+
+**Authentication Required:** Yes
+
+Searches for an exact email match (case-insensitive).""",
+    responses={
+        200: {"description": "User retrieved successfully"},
+        404: {"model": NotFoundErrorResponse, "description": "Organization or user not found"},
+        500: {"model": InternalServerErrorResponse, "description": "Internal server error"},
+    },
 )
 async def get_user_by_email(
     org_id: str = Path(..., description="Organization ID"),
@@ -411,8 +514,18 @@ async def get_user_by_email(
 @router.get(
     "/organizations/{org_id}/users/search/by-username/{username}",
     response_model=UserResponse,
-    summary="Get user by username",
-    description="Retrieve a user by their username within the organization.",
+    summary="Get User by Username",
+    operation_id="getUserByUsername",
+    description="""Retrieve a user by their username within the organization.
+
+**Authentication Required:** Yes
+
+Searches for an exact username match (case-insensitive).""",
+    responses={
+        200: {"description": "User retrieved successfully"},
+        404: {"model": NotFoundErrorResponse, "description": "Organization or user not found"},
+        500: {"model": InternalServerErrorResponse, "description": "Internal server error"},
+    },
 )
 async def get_user_by_username(
     org_id: str = Path(..., description="Organization ID"),
@@ -467,13 +580,23 @@ async def get_user_by_username(
 
 @router.get(
     "/organizations/{org_id}/users/stats/summary",
-    response_model=Dict[str, Any],
-    summary="Get user statistics for organization",
-    description="Get summary statistics about users in the organization.",
+    response_model=UserStatsResponse,
+    summary="Get User Statistics",
+    operation_id="getUserStats",
+    description="""Get summary statistics about users in the organization.
+
+**Authentication Required:** Yes (Admin role recommended)
+
+Returns counts by role, active/inactive status, and recent activity metrics.""",
+    responses={
+        200: {"description": "Statistics retrieved successfully"},
+        404: {"model": NotFoundErrorResponse, "description": "Organization not found"},
+        500: {"model": InternalServerErrorResponse, "description": "Internal server error"},
+    },
 )
 async def get_user_stats(
     org_id: str = Path(..., description="Organization ID")
-) -> Dict[str, Any]:
+) -> UserStatsResponse:
     """
     Get user statistics for organization.
 
@@ -534,16 +657,16 @@ async def get_user_stats(
                 if user_last_login > recent_cutoff:
                     recent_activity_count += 1
 
-        stats = {
-            "total_users": total_count,
-            "active_users": active_count,
-            "inactive_users": inactive_count,
-            "users_with_recent_activity": recent_activity_count,
-            "role_distribution": role_counts,
-            "privileged_users": role_counts["admin"] + role_counts["user"],
-        }
+        stats = UserStatsResponse(
+            total_users=total_count,
+            active_users=active_count,
+            inactive_users=inactive_count,
+            users_with_recent_activity=recent_activity_count,
+            role_distribution=role_counts,
+            privileged_users=role_counts["admin"] + role_counts["user"],
+        )
 
-        logger.debug("User statistics retrieved", org_id=org_id, stats=stats)
+        logger.debug("User statistics retrieved", org_id=org_id, stats=stats.model_dump())
 
         return stats
 

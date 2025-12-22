@@ -1,0 +1,32 @@
+# ===========================================
+# Development Environment Configuration
+# ===========================================
+# Used by deploy.sh for Cloud Run deployment
+# Values aligned with .env for consistency
+
+# GCP Configuration
+GCP_PROJECT_ID: "biz2bricks-dev-v1"
+
+# Cloud SQL PostgreSQL - MUST MATCH .env
+CLOUD_SQL_INSTANCE: "biz2bricks-dev-v1:us-central1:doc-intelligence-db"
+DATABASE_NAME: "doc_intelligence"
+DATABASE_USER: "postgres"
+DATABASE_PASSWORD: "Pa**Word01"
+
+# Authentication - MUST be at least 32 characters
+JWT_SECRET_KEY: "d0iI5GUWkYi1wJxPRYnMHlj9UHKsmvyFgW5G18rvAl9bGzR3tbkiOzOTCkFaoi8r"
+
+# Google Cloud Storage
+GCS_BUCKET_NAME: "biz2bricks-dev-v1-document-store"
+
+# CORS and Frontend
+FRONTEND_DOMAIN: "dev.biztobricks.com"
+PRODUCTION_CORS_ORIGINS: '["https://dev.biztobricks.com","http://localhost:3000"]'
+
+# Document Settings
+MAX_FILE_SIZE: "52428800"
+ALLOWED_FILE_TYPES: '["pdf", "xlsx", "xls", "csv"]'
+
+# Cache Configuration
+CACHE_ENABLED: "true"
+CACHE_BACKEND: "memory"

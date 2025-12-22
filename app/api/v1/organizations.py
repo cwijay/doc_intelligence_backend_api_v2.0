@@ -16,6 +16,11 @@ from app.models.schemas import (
     PaginationParams,
     OrganizationFilters,
     PlanType,
+    OrganizationStatsResponse,
+    NotFoundErrorResponse,
+    ConflictErrorResponse,
+    ValidationErrorResponse,
+    InternalServerErrorResponse,
 )
 
 logger = get_service_logger("organization_api")
@@ -27,8 +32,32 @@ router = APIRouter(prefix="/organizations")
     "/",
     response_model=OrganizationResponse,
     status_code=status.HTTP_201_CREATED,
-    summary="Create a new organization",
-    description="Create a new organization with the provided details. Organization name must be unique.",
+    summary="Create Organization",
+    operation_id="createOrganization",
+    description="""Create a new organization with the provided details.
+
+**Authentication Required:** Yes (System Admin)
+
+**Validation Rules:**
+- Organization name must be unique (2-255 characters)
+- Domain must be valid format (optional)
+- Plan type: FREE, STARTER, or PRO
+
+**Example Request:**
+```json
+{
+  "name": "Acme Corporation",
+  "domain": "acme.com",
+  "plan_type": "starter",
+  "settings": {"timezone": "America/New_York"}
+}
+```""",
+    responses={
+        201: {"description": "Organization created successfully"},
+        409: {"model": ConflictErrorResponse, "description": "Organization name already exists"},
+        422: {"model": ValidationErrorResponse, "description": "Validation error"},
+        500: {"model": InternalServerErrorResponse, "description": "Internal server error"},
+    },
 )
 async def create_organization(
     organization: OrganizationCreateRequest,
@@ -75,8 +104,18 @@ async def create_organization(
 @router.get(
     "/{org_id}",
     response_model=OrganizationResponse,
-    summary="Get organization by ID",
-    description="Retrieve a specific organization by its unique identifier.",
+    summary="Get Organization",
+    operation_id="getOrganization",
+    description="""Retrieve a specific organization by its unique identifier.
+
+**Authentication Required:** Yes
+
+Returns the organization's details including name, domain, settings, plan type, and timestamps.""",
+    responses={
+        200: {"description": "Organization retrieved successfully"},
+        404: {"model": NotFoundErrorResponse, "description": "Organization not found"},
+        500: {"model": InternalServerErrorResponse, "description": "Internal server error"},
+    },
 )
 async def get_organization(org_id: str) -> OrganizationResponse:
     """
@@ -108,8 +147,28 @@ async def get_organization(org_id: str) -> OrganizationResponse:
 @router.put(
     "/{org_id}",
     response_model=OrganizationResponse,
-    summary="Update organization",
-    description="Update an existing organization's details. Only provided fields will be updated.",
+    summary="Update Organization",
+    operation_id="updateOrganization",
+    description="""Update an existing organization's details.
+
+**Authentication Required:** Yes (Admin role)
+
+Only provided fields will be updated. All fields are optional.
+
+**Example Request:**
+```json
+{
+  "plan_type": "pro",
+  "settings": {"timezone": "Europe/London"}
+}
+```""",
+    responses={
+        200: {"description": "Organization updated successfully"},
+        404: {"model": NotFoundErrorResponse, "description": "Organization not found"},
+        409: {"model": ConflictErrorResponse, "description": "Organization name already exists"},
+        422: {"model": ValidationErrorResponse, "description": "Validation error"},
+        500: {"model": InternalServerErrorResponse, "description": "Internal server error"},
+    },
 )
 async def update_organization(
     org_id: str, organization: OrganizationUpdateRequest
@@ -159,8 +218,25 @@ async def update_organization(
 @router.get(
     "/",
     response_model=OrganizationList,
-    summary="List organizations",
-    description="Retrieve a paginated list of organizations with optional filtering.",
+    summary="List Organizations",
+    operation_id="listOrganizations",
+    description="""Retrieve a paginated list of organizations with optional filtering.
+
+**Authentication Required:** Yes
+
+**Query Parameters:**
+- `page`: Page number (starts from 1)
+- `per_page`: Items per page (max 100)
+- `name`: Filter by organization name (partial match)
+- `domain`: Filter by domain (partial match)
+- `plan_type`: Filter by plan type (FREE, STARTER, PRO)
+- `is_active`: Filter by active status (true/false)
+
+**Example:** `/organizations?page=1&per_page=20&plan_type=pro`""",
+    responses={
+        200: {"description": "Organizations retrieved successfully"},
+        500: {"model": InternalServerErrorResponse, "description": "Internal server error"},
+    },
 )
 async def list_organizations(
     page: int = Query(default=1, ge=1, description="Page number (starts from 1)"),
@@ -222,8 +298,20 @@ async def list_organizations(
 @router.delete(
     "/{org_id}",
     response_model=OrganizationDeleteResponse,
-    summary="Delete organization",
-    description="Soft delete an organization by setting it as inactive. This operation cannot be undone via API.",
+    summary="Delete Organization",
+    operation_id="deleteOrganization",
+    description="""Soft delete an organization by setting it as inactive.
+
+**Authentication Required:** Yes (System Admin)
+
+**Important:** This performs a soft delete by marking the organization as inactive.
+The organization data is preserved but will not appear in normal queries.
+This operation cannot be undone via API.""",
+    responses={
+        200: {"description": "Organization deleted successfully"},
+        404: {"model": NotFoundErrorResponse, "description": "Organization not found"},
+        500: {"model": InternalServerErrorResponse, "description": "Internal server error"},
+    },
 )
 async def delete_organization(org_id: str) -> OrganizationDeleteResponse:
     """
@@ -269,8 +357,18 @@ async def delete_organization(org_id: str) -> OrganizationDeleteResponse:
 @router.get(
     "/search/by-name/{name}",
     response_model=OrganizationResponse,
-    summary="Get organization by name",
-    description="Retrieve an organization by its exact name. This endpoint is useful for lookups by name.",
+    summary="Get Organization by Name",
+    operation_id="getOrganizationByName",
+    description="""Retrieve an organization by its exact name.
+
+**Authentication Required:** Yes
+
+Searches for an exact name match (case-insensitive). Useful for lookups when you know the organization name but not the ID.""",
+    responses={
+        200: {"description": "Organization retrieved successfully"},
+        404: {"model": NotFoundErrorResponse, "description": "Organization not found"},
+        500: {"model": InternalServerErrorResponse, "description": "Internal server error"},
+    },
 )
 async def get_organization_by_name(name: str) -> OrganizationResponse:
     """
@@ -304,11 +402,20 @@ async def get_organization_by_name(name: str) -> OrganizationResponse:
 
 @router.get(
     "/stats/summary",
-    response_model=Dict[str, Any],
-    summary="Get organization statistics",
-    description="Get summary statistics about organizations in the system.",
+    response_model=OrganizationStatsResponse,
+    summary="Get Organization Statistics",
+    operation_id="getOrganizationStats",
+    description="""Get summary statistics about organizations in the system.
+
+**Authentication Required:** Yes (System Admin recommended)
+
+Returns counts by plan type, active/inactive status, domain configuration, and premium organization metrics.""",
+    responses={
+        200: {"description": "Statistics retrieved successfully"},
+        500: {"model": InternalServerErrorResponse, "description": "Internal server error"},
+    },
 )
-async def get_organization_stats() -> Dict[str, Any]:
+async def get_organization_stats() -> OrganizationStatsResponse:
     """
     Get organization statistics and summary information.
 
@@ -354,16 +461,16 @@ async def get_organization_stats() -> Dict[str, Any]:
             1 for org in all_orgs.organizations if org.domain and org.is_active
         )
 
-        stats = {
-            "total_organizations": total_count,
-            "active_organizations": active_count,
-            "inactive_organizations": inactive_count,
-            "organizations_with_domain": with_domain_count,
-            "plan_distribution": plan_counts,
-            "premium_organizations": plan_counts["starter"] + plan_counts["pro"],
-        }
+        stats = OrganizationStatsResponse(
+            total_organizations=total_count,
+            active_organizations=active_count,
+            inactive_organizations=inactive_count,
+            organizations_with_domain=with_domain_count,
+            plan_distribution=plan_counts,
+            premium_organizations=plan_counts["starter"] + plan_counts["pro"],
+        )
 
-        logger.debug("Organization statistics retrieved", stats=stats)
+        logger.debug("Organization statistics retrieved", stats=stats.model_dump())
 
         return stats
 

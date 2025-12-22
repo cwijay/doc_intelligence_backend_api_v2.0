@@ -40,6 +40,7 @@ router = APIRouter()
     "/",
     response_model=DocumentList,
     summary="📋 List Documents",
+    operation_id="listDocuments",
     description="""List documents with pagination and filtering capabilities.
 
 **Authentication Required:** Session token in `Authorization: Bearer <token>` header
@@ -192,6 +193,9 @@ async def list_documents(
     folder_path: Optional[str] = Query(
         None, description="Filter by folder path (target_path uploads, e.g. 'invoices')"
     ),
+    folder_name: Optional[str] = Query(
+        None, description="Filter by folder name (exact match lookup)"
+    ),
     uploaded_by: Optional[str] = Query(None, description="Filter by uploader user ID"),
     user_context: Dict[str, str] = Depends(get_user_context),
     deps=Depends(get_document_dependencies),
@@ -213,6 +217,7 @@ async def list_documents(
             status=document_status,
             folder_id=folder_id,
             folder_path=folder_path,
+            folder_name=folder_name,
             uploaded_by=uploaded_by,
         )
 
@@ -245,6 +250,7 @@ async def list_documents(
     "/{document_id}",
     response_model=DocumentResponse,
     summary="📄 Get Document Details",
+    operation_id="getDocument",
     description="""Retrieve detailed information about a specific document.
 
 **Authentication Required:** Session token in `Authorization: Bearer <token>` header
@@ -341,6 +347,7 @@ async def get_document(
     "/{document_id}/status",
     response_model=DocumentResponse,
     summary="🔄 Update Document Status",
+    operation_id="updateDocumentStatus",
     description="""Update the processing status of a document.
 
 **Authentication Required:** Session token in `Authorization: Bearer <token>` header
@@ -464,6 +471,7 @@ async def update_document_status(
     "/{document_id}",
     response_model=DocumentDeleteResponse,
     summary="🗑️ Delete Document",
+    operation_id="deleteDocument",
     description="""Delete a document from the system.
 
 **Authentication Required:** Session token in `Authorization: Bearer <token>` header

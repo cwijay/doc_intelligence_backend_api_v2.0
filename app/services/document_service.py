@@ -28,6 +28,7 @@ from .document.document_base_service import (
     DocumentNotFoundError,
     DocumentValidationError,
     DocumentUploadError,
+    DocumentDuplicateError,
 )
 
 # Make sure the global service instance is available at module level
@@ -37,4 +38,5 @@ __all__ = [
     "DocumentNotFoundError",
     "DocumentValidationError",
     "DocumentUploadError",
+    "DocumentDuplicateError",
 ]

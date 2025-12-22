@@ -20,8 +20,12 @@ from fastapi import UploadFile
 from app.models.document import Document, DocumentStatus
 from app.models.schemas import DocumentResponse, DocumentUploadResponse
 from app.core.gcs_client import gcs_client, GCSClientError
-from app.core.db_models import DocumentModel, AuditAction, AuditEntityType
+from biz2bricks_core import DocumentModel, AuditAction, AuditEntityType
 from app.services.audit_service import audit_service
+from app.services.usage_enforcement import (
+    update_storage_after_upload,
+    update_storage_after_delete,
+)
 from .document_base_service import (
     DocumentBaseService,
     DocumentNotFoundError,
@@ -71,6 +75,7 @@ class DocumentCrudService(DocumentBaseService):
         folder_id: Optional[str] = None,
         target_path: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        force_override: bool = False,  # Deprecated: silent overwrite is always used
         validation_service=None,
         storage_service=None,
         ip_address: Optional[str] = None,
@@ -80,6 +85,10 @@ class DocumentCrudService(DocumentBaseService):
         """
         Upload and create a new document with two-phase commit.
 
+        Uses silent overwrite behavior: if a file with the same name exists in the
+        same folder, the existing document is soft-deleted and replaced with the new one.
+        GCS automatically overwrites the file at the same storage path.
+
         Args:
             org_id: Organization ID
             file: Uploaded file
@@ -87,6 +96,7 @@ class DocumentCrudService(DocumentBaseService):
             folder_id: Target folder ID (optional)
             target_path: Custom path where file should be saved (optional)
             metadata: Additional metadata (optional)
+            force_override: Deprecated, silent overwrite is always used
             validation_service: Validation service dependency
             storage_service: Storage service dependency
             ip_address: Client IP address (for audit)
@@ -167,6 +177,28 @@ class DocumentCrudService(DocumentBaseService):
                     org_id=org_id,
                     original_path=original_storage_path,
                     unique_path=storage_path,
+                )
+
+            # Check for duplicate filename in the same folder
+            # Silent overwrite: always soft-delete existing document if found
+            existing_doc = await storage_service.check_duplicate_filename(
+                org_id=org_id,
+                folder_id=folder_id,
+                original_filename=file.filename,
+            )
+
+            if existing_doc:
+                # Silent overwrite: soft-delete the existing document
+                self.logger.info(
+                    "Silent overwrite: deleting existing document",
+                    org_id=org_id,
+                    existing_doc_id=existing_doc["id"],
+                    filename=file.filename,
+                )
+                await self.delete_document(
+                    org_id=org_id,
+                    document_id=existing_doc["id"],
+                    deleted_by_user_id=user_id,
                 )
 
             # Ensure GCS is available
@@ -286,6 +318,9 @@ class DocumentCrudService(DocumentBaseService):
                         user_agent=user_agent,
                     )
                 )
+
+                # Update storage usage (non-blocking)
+                asyncio.create_task(update_storage_after_upload(org_id, actual_size))
 
                 return DocumentUploadResponse(
                     success=True,
@@ -510,6 +545,7 @@ class DocumentCrudService(DocumentBaseService):
 
                 filename = doc_model.filename
                 storage_path = doc_model.storage_path
+                file_size = doc_model.file_size
 
                 # Soft delete
                 deleted_status = (
@@ -551,6 +587,9 @@ class DocumentCrudService(DocumentBaseService):
                         user_agent=user_agent,
                     )
                 )
+
+                # Update storage usage (non-blocking)
+                asyncio.create_task(update_storage_after_delete(org_id, file_size))
 
                 return {
                     "success": True,

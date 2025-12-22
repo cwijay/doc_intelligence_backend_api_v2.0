@@ -13,7 +13,12 @@ import json
 from fastapi import APIRouter, File, Form, UploadFile, Depends, HTTPException, status
 
 from app.models.schemas import DocumentUploadResponse
-from app.services.document_service import DocumentValidationError, DocumentUploadError
+from app.services.document_service import (
+    DocumentValidationError,
+    DocumentUploadError,
+    DocumentDuplicateError,
+)
+from app.services.usage_enforcement import check_storage_before_upload
 from .common import (
     get_document_dependencies,
     get_user_context,
@@ -32,10 +37,11 @@ router = APIRouter()
     "/upload",
     response_model=DocumentUploadResponse,
     summary="📤 Upload Document",
+    operation_id="uploadDocument",
     description="""Upload a new document with precise storage path control.
     
 **Primary Parameters:**
-- **file**: Document file (PDF or XLSX, max 50MB)
+- **file**: Document file (PDF, XLSX, CSV, JPEG, PNG, DOCX, DOC, PPTX, PPT, TXT, GIF, WEBP, TIFF - max 50MB)
 - **target_path**: Complete GCS storage path (recommended)
     - Format: `{org_name}/original/{folder_name}/{document_name}`
     - Example: `"Google/original/invoices/invoice-2025-001.pdf"`
@@ -83,8 +89,9 @@ curl -X POST "http://localhost:8000/api/v1/documents/upload" \\
 
 **Error Responses:**
 - **400 Bad Request**: Invalid file, metadata, or validation error
+- **409 Conflict**: Document with same name already exists in folder (use force_override=true to replace)
 - **413 Payload Too Large**: File exceeds 50MB limit
-- **422 Unprocessable Entity**: Invalid file type (only PDF/XLSX supported)
+- **422 Unprocessable Entity**: Invalid file type
 - **500 Internal Server Error**: Upload processing error""",
     responses={
         200: {
@@ -129,6 +136,23 @@ curl -X POST "http://localhost:8000/api/v1/documents/upload" \\
                 }
             },
         },
+        409: {
+            "description": "Document with same name already exists",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "detail": "Document with same name already exists in folder",
+                        "existing_document": {
+                            "id": "abc123",
+                            "filename": "invoice.pdf",
+                            "created_at": "2025-01-15T10:00:00",
+                            "uploaded_by": "user123",
+                        },
+                        "hint": "Use force_override=true to replace the existing document",
+                    }
+                }
+            },
+        },
         413: {
             "description": "File too large",
             "content": {
@@ -140,11 +164,7 @@ curl -X POST "http://localhost:8000/api/v1/documents/upload" \\
         422: {
             "description": "Unsupported file type",
             "content": {
-                "application/json": {
-                    "example": {
-                        "detail": "Unsupported file type. Only PDF and XLSX files are allowed"
-                    }
-                }
+                "application/json": {"example": {"detail": "Unsupported file type"}}
             },
         },
         500: {
@@ -160,7 +180,7 @@ curl -X POST "http://localhost:8000/api/v1/documents/upload" \\
     },
 )
 async def upload_document(
-    file: UploadFile = File(..., description="Document file (PDF or XLSX, max 50MB)"),
+    file: UploadFile = File(..., description="Document file (max 50MB)"),
     target_path: Optional[str] = Form(
         None,
         description="Complete storage path: {org_name}/original/{folder_name}/{document_name}",
@@ -170,6 +190,10 @@ async def upload_document(
     ),
     metadata: Optional[str] = Form(
         "{}", description="Additional metadata as JSON string"
+    ),
+    force_override: bool = Form(
+        False,
+        description="Force override existing document with same name in folder",
     ),
     user_context: Dict[str, str] = Depends(get_user_context),
     deps=Depends(get_document_dependencies),
@@ -189,6 +213,7 @@ async def upload_document(
         folder_id=folder_id,
         target_path=target_path,
         metadata=metadata,
+        force_override=force_override,
         file_size=file.size if file else "UNKNOWN",
         content_type=file.content_type if file else "UNKNOWN",
         **user_context,
@@ -202,6 +227,16 @@ async def upload_document(
         org_id = user_context["org_id"]
         user_id = user_context["user_id"]
 
+        # Check storage limit before upload
+        file_size = file.size if file.size else 0
+        if file_size == 0:
+            # Read file content to determine size, then reset
+            content = await file.read()
+            file_size = len(content)
+            await file.seek(0)
+
+        await check_storage_before_upload(org_id, file_size)
+
         # Call document service to handle upload
         result = await document_service.create_document(
             org_id=org_id,
@@ -210,6 +245,7 @@ async def upload_document(
             folder_id=folder_id,
             target_path=target_path,
             metadata=parsed_metadata,
+            force_override=force_override,
         )
 
         # Log successful upload
@@ -222,6 +258,21 @@ async def upload_document(
 
         return result
 
+    except DocumentDuplicateError as e:
+        logger.warning(
+            "Duplicate document detected",
+            filename=file.filename,
+            existing_document=e.existing_document,
+            **user_context,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "detail": str(e),
+                "existing_document": e.existing_document,
+                "hint": "Use force_override=true to replace the existing document",
+            },
+        )
     except DocumentValidationError as e:
         raise handle_document_validation_error(e, "document upload", **user_context)
     except DocumentUploadError as e:

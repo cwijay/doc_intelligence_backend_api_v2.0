@@ -8,7 +8,9 @@ It implements the Facade pattern to provide a unified interface to a complex sub
 The service delegates operations to specialized services:
 - DocumentValidationService: File validation and security
 - DocumentStorageService: GCS operations and path management
-- Additional services for CRUD, querying, sync, and downloads
+- DocumentCrudService: Create, read, update, delete operations
+- DocumentQueryService: Document listing and pagination
+- DocumentDownloadService: Download URL generation
 """
 
 from typing import Optional, Dict, Any, Tuple
@@ -32,7 +34,6 @@ from .document_validation_service import DocumentValidationService
 from .document_storage_service import DocumentStorageService
 from .document_crud_service import DocumentCrudService
 from .document_query_service import DocumentQueryService
-from .document_sync_service import DocumentSyncService
 from .document_download_service import DocumentDownloadService
 
 
@@ -53,7 +54,6 @@ class DocumentService(DocumentBaseService):
         self.storage_service = DocumentStorageService()
         self.crud_service = DocumentCrudService()
         self.query_service = DocumentQueryService()
-        self.sync_service = DocumentSyncService()
         self.download_service = DocumentDownloadService()
 
     # ========================================
@@ -122,6 +122,7 @@ class DocumentService(DocumentBaseService):
         folder_id: Optional[str] = None,
         target_path: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        force_override: bool = False,
     ) -> DocumentUploadResponse:
         """Delegate to CRUD service."""
         return await self.crud_service.create_document(
@@ -131,6 +132,7 @@ class DocumentService(DocumentBaseService):
             folder_id=folder_id,
             target_path=target_path,
             metadata=metadata,
+            force_override=force_override,
             validation_service=self.validation_service,
             storage_service=self.storage_service,
         )
@@ -189,67 +191,6 @@ class DocumentService(DocumentBaseService):
             document_id=document_id,
             expiration_minutes=expiration_minutes,
             crud_service=self.crud_service,
-        )
-
-    async def validate_sync(
-        self, org_id: str, folder_id: Optional[str] = None
-    ) -> Dict[str, Any]:
-        """Delegate to sync service."""
-        return await self.sync_service.validate_sync(org_id=org_id, folder_id=folder_id)
-
-    async def get_document_by_filename(
-        self,
-        org_id: str,
-        filename: str,
-        exact_match: bool = True,
-        include_inactive: bool = False,
-    ) -> Any:
-        """Delegate to query service."""
-        return await self.query_service.get_document_by_filename(
-            org_id=org_id,
-            filename=filename,
-            exact_match=exact_match,
-            include_inactive=include_inactive,
-            storage_service=self.storage_service,
-            validation_service=self.validation_service,
-        )
-
-    async def get_documents_by_folder_name(
-        self,
-        org_id: str,
-        folder_name: str,
-        pagination: PaginationParams,
-        exact_match: bool = True,
-        include_inactive: bool = False,
-        additional_filters: Optional[DocumentFilters] = None,
-    ) -> Any:
-        """Delegate to query service."""
-        return await self.query_service.get_documents_by_folder_name(
-            org_id=org_id,
-            folder_name=folder_name,
-            pagination=pagination,
-            exact_match=exact_match,
-            include_inactive=include_inactive,
-            additional_filters=additional_filters,
-        )
-
-    async def sync_content_to_database(
-        self, org_id: str, document_id: str, content: str, user_id: str
-    ) -> Dict[str, Any]:
-        """Delegate to sync service."""
-        return await self.sync_service.sync_content_to_database(
-            org_id=org_id, document_id=document_id, content=content, user_id=user_id
-        )
-
-    async def sync_content_from_database_to_gcs(
-        self, org_id: str, document_id: str, user_id: str
-    ) -> Dict[str, Any]:
-        """Delegate to sync service."""
-        return await self.sync_service.sync_content_from_database_to_gcs(
-            org_id=org_id,
-            document_id=document_id,
-            user_id=user_id,
-            storage_service=self.storage_service,
         )
 
 

@@ -20,6 +20,12 @@ from app.models.schemas import (
     FolderDeleteResponse,
     PaginationParams,
     FolderFilters,
+    FolderStatsResponse,
+    NotFoundErrorResponse,
+    ConflictErrorResponse,
+    ValidationErrorResponse,
+    ForbiddenErrorResponse,
+    InternalServerErrorResponse,
 )
 
 logger = get_service_logger("folder_api")
@@ -31,8 +37,28 @@ router = APIRouter()
     "/organizations/{org_id}/folders",
     response_model=FolderResponse,
     status_code=status.HTTP_201_CREATED,
-    summary="Create a new folder",
-    description="Create a new folder in the specified organization. Folder names must be unique within the parent folder.",
+    summary="Create Folder",
+    operation_id="createFolder",
+    description="""Create a new folder in the specified organization.
+
+**Authentication Required:** Yes
+
+Folder names must be unique within the parent folder. Use `parent_folder_id: null` to create a root folder.
+
+**Example Request:**
+```json
+{
+  "name": "invoices",
+  "parent_folder_id": null
+}
+```""",
+    responses={
+        201: {"description": "Folder created successfully"},
+        400: {"model": ValidationErrorResponse, "description": "Validation error"},
+        403: {"model": ForbiddenErrorResponse, "description": "Access denied to organization"},
+        409: {"model": ConflictErrorResponse, "description": "Folder name already exists"},
+        500: {"model": InternalServerErrorResponse, "description": "Internal server error"},
+    },
 )
 async def create_folder(
     folder: FolderCreateRequest,
@@ -113,8 +139,16 @@ async def create_folder(
 @router.get(
     "/organizations/{org_id}/folders/{folder_id}",
     response_model=FolderResponse,
-    summary="Get folder by ID",
-    description="Retrieve a specific folder by its unique identifier.",
+    summary="Get Folder",
+    operation_id="getFolder",
+    description="""Retrieve a specific folder by its unique identifier.
+
+**Authentication Required:** Yes""",
+    responses={
+        200: {"description": "Folder retrieved successfully"},
+        404: {"model": NotFoundErrorResponse, "description": "Folder not found"},
+        500: {"model": InternalServerErrorResponse, "description": "Internal server error"},
+    },
 )
 async def get_folder(
     org_id: str = Path(..., description="Organization ID"),
@@ -155,8 +189,23 @@ async def get_folder(
 @router.get(
     "/organizations/{org_id}/folders",
     response_model=FolderList,
-    summary="List folders",
-    description="Retrieve a paginated list of folders with optional filtering.",
+    summary="List Folders",
+    operation_id="listFolders",
+    description="""Retrieve a paginated list of folders with optional filtering.
+
+**Authentication Required:** Yes
+
+**Query Parameters:**
+- `page`: Page number (starts from 1)
+- `per_page`: Items per page (max 100)
+- `name`: Filter by folder name (partial match)
+- `parent_folder_id`: Filter by parent (null for root folders)
+- `created_by`: Filter by creator user ID
+- `is_active`: Filter by active status""",
+    responses={
+        200: {"description": "Folders retrieved successfully"},
+        500: {"model": InternalServerErrorResponse, "description": "Internal server error"},
+    },
 )
 async def list_folders(
     org_id: str = Path(..., description="Organization ID"),
@@ -231,8 +280,17 @@ async def list_folders(
 @router.get(
     "/organizations/{org_id}/folders/tree",
     response_model=FolderTree,
-    summary="Get folder tree",
-    description="Retrieve the complete folder hierarchy as a tree structure.",
+    summary="Get Folder Tree",
+    operation_id="getFolderTree",
+    description="""Retrieve the complete folder hierarchy as a tree structure.
+
+**Authentication Required:** Yes
+
+Returns nested folders with children arrays for building hierarchical UI.""",
+    responses={
+        200: {"description": "Folder tree retrieved successfully"},
+        500: {"model": InternalServerErrorResponse, "description": "Internal server error"},
+    },
 )
 async def get_folder_tree(
     org_id: str = Path(..., description="Organization ID")
@@ -268,8 +326,19 @@ async def get_folder_tree(
 @router.put(
     "/organizations/{org_id}/folders/{folder_id}",
     response_model=FolderResponse,
-    summary="Update folder",
-    description="Update an existing folder's details. Only provided fields will be updated.",
+    summary="Update Folder",
+    operation_id="updateFolder",
+    description="""Update an existing folder's details.
+
+**Authentication Required:** Yes
+
+Only the name field can be updated. Note: Folder renames require path recalculation.""",
+    responses={
+        200: {"description": "Folder updated successfully"},
+        400: {"model": ValidationErrorResponse, "description": "Validation error"},
+        404: {"model": NotFoundErrorResponse, "description": "Folder not found"},
+        500: {"model": InternalServerErrorResponse, "description": "Internal server error"},
+    },
 )
 async def update_folder(
     folder: FolderUpdateRequest,
@@ -331,8 +400,19 @@ async def update_folder(
 @router.put(
     "/organizations/{org_id}/folders/{folder_id}/move",
     response_model=FolderResponse,
-    summary="Move folder",
-    description="Move a folder to a new parent folder or to the root level.",
+    summary="Move Folder",
+    operation_id="moveFolder",
+    description="""Move a folder to a new parent folder or to the root level.
+
+**Authentication Required:** Yes
+
+Set `new_parent_folder_id: null` to move to root. All descendant paths are automatically updated.""",
+    responses={
+        200: {"description": "Folder moved successfully"},
+        400: {"model": ValidationErrorResponse, "description": "Invalid move (circular reference)"},
+        404: {"model": NotFoundErrorResponse, "description": "Folder not found"},
+        500: {"model": InternalServerErrorResponse, "description": "Internal server error"},
+    },
 )
 async def move_folder(
     move_request: FolderMoveRequest,
@@ -396,8 +476,18 @@ async def move_folder(
 @router.delete(
     "/organizations/{org_id}/folders/{folder_id}",
     response_model=FolderDeleteResponse,
-    summary="Delete folder",
-    description="Delete a folder and all its contents recursively. This operation cannot be undone.",
+    summary="Delete Folder",
+    operation_id="deleteFolder",
+    description="""Delete a folder and all its contents recursively.
+
+**Authentication Required:** Yes
+
+**Warning:** This deletes all subfolders and documents. This operation cannot be undone.""",
+    responses={
+        200: {"description": "Folder deleted successfully"},
+        404: {"model": NotFoundErrorResponse, "description": "Folder not found"},
+        500: {"model": InternalServerErrorResponse, "description": "Internal server error"},
+    },
 )
 async def delete_folder(
     org_id: str = Path(..., description="Organization ID"),
@@ -452,8 +542,18 @@ async def delete_folder(
 @router.get(
     "/organizations/{org_id}/folders/{folder_id}/path",
     response_model=Dict[str, str],
-    summary="Get folder path",
-    description="Get the full path of a folder.",
+    summary="Get Folder Path",
+    operation_id="getFolderPath",
+    description="""Get the full path of a folder.
+
+**Authentication Required:** Yes
+
+Returns the complete path from root (e.g., "/invoices/2025/q1").""",
+    responses={
+        200: {"description": "Folder path retrieved successfully"},
+        404: {"model": NotFoundErrorResponse, "description": "Folder not found"},
+        500: {"model": InternalServerErrorResponse, "description": "Internal server error"},
+    },
 )
 async def get_folder_path(
     org_id: str = Path(..., description="Organization ID"),
@@ -497,13 +597,22 @@ async def get_folder_path(
 
 @router.get(
     "/organizations/{org_id}/folders/stats/summary",
-    response_model=Dict[str, Any],
-    summary="Get folder statistics",
-    description="Get summary statistics about folders in the organization.",
+    response_model=FolderStatsResponse,
+    summary="Get Folder Statistics",
+    operation_id="getFolderStats",
+    description="""Get summary statistics about folders in the organization.
+
+**Authentication Required:** Yes
+
+Returns counts by depth, root folder count, and active/inactive metrics.""",
+    responses={
+        200: {"description": "Statistics retrieved successfully"},
+        500: {"model": InternalServerErrorResponse, "description": "Internal server error"},
+    },
 )
 async def get_folder_stats(
     org_id: str = Path(..., description="Organization ID")
-) -> Dict[str, Any]:
+) -> FolderStatsResponse:
     """
     Get folder statistics and summary information.
 
@@ -538,16 +647,19 @@ async def get_folder_stats(
                 depth = folder.depth
                 depth_counts[depth] = depth_counts.get(depth, 0) + 1
 
-        stats = {
-            "total_folders": total_count,
-            "active_folders": active_count,
-            "inactive_folders": inactive_count,
-            "root_folders": root_count,
-            "depth_distribution": depth_counts,
-            "max_depth": max(depth_counts.keys()) if depth_counts else 0,
-        }
+        # Convert depth_counts keys to strings for the response model
+        depth_distribution = {str(k): v for k, v in depth_counts.items()}
 
-        logger.debug("Folder statistics retrieved", org_id=org_id, stats=stats)
+        stats = FolderStatsResponse(
+            total_folders=total_count,
+            active_folders=active_count,
+            inactive_folders=inactive_count,
+            root_folders=root_count,
+            depth_distribution=depth_distribution,
+            max_depth=max(depth_counts.keys()) if depth_counts else 0,
+        )
+
+        logger.debug("Folder statistics retrieved", org_id=org_id, stats=stats.model_dump())
 
         return stats
 

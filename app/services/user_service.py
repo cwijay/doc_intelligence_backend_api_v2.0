@@ -16,8 +16,8 @@ from app.models.schemas import (
     PaginationParams,
     UserFilters,
 )
-from app.core.db_client import db
-from app.core.db_models import (
+from biz2bricks_core import (
+    db,
     UserModel,
     OrganizationModel,
     AuditAction,
@@ -25,6 +25,7 @@ from app.core.db_models import (
 )
 from app.core.security import hash_password, verify_password
 from app.core.logging import get_service_logger
+from app.core.cache import cached_users, invalidate_users
 from app.services.audit_service import audit_service
 
 logger = get_service_logger("user")
@@ -69,6 +70,16 @@ class UserService:
             created_at=model.created_at,
             updated_at=model.updated_at,
         )
+
+    def _ensure_response_model(self, data: UserResponse | dict) -> UserResponse:
+        """Ensure cached data is converted back to Pydantic model.
+
+        fastapi-cache2 serializes responses to JSON dicts when caching.
+        This method ensures we always return a proper Pydantic model.
+        """
+        if isinstance(data, dict):
+            return UserResponse.model_validate(data)
+        return data
 
     async def _verify_organization_exists(self, org_id: str) -> bool:
         """Verify that an organization exists and is active."""
@@ -183,6 +194,9 @@ class UserService:
                     "User created", org_id=org_id, user_id=user_id, email=user.email
                 )
 
+                # Invalidate user cache
+                asyncio.create_task(invalidate_users(org_id))
+
                 # Audit logging (non-blocking)
                 asyncio.create_task(
                     audit_service.log_event(
@@ -226,12 +240,18 @@ class UserService:
             user_id: User ID
 
         Returns:
-            User response
+            User response (cached for 5 minutes)
 
         Raises:
             OrganizationNotFoundError: If organization doesn't exist
             UserNotFoundError: If user not found
         """
+        result = await self._get_user_cached(org_id, user_id)
+        return self._ensure_response_model(result)
+
+    @cached_users()
+    async def _get_user_cached(self, org_id: str, user_id: str) -> UserResponse:
+        """Internal cached method for fetching user."""
         try:
             async with db.session() as session:
                 # Verify organization exists
@@ -397,6 +417,9 @@ class UserService:
                             "old": old_values.get(key),
                             "new": new_values.get(key),
                         }
+
+                # Invalidate user cache
+                asyncio.create_task(invalidate_users(org_id))
 
                 # Audit logging (non-blocking)
                 asyncio.create_task(
@@ -597,6 +620,9 @@ class UserService:
                     user_id=user_id,
                     email=user_model.email,
                 )
+
+                # Invalidate user cache
+                asyncio.create_task(invalidate_users(org_id))
 
                 # Audit logging (non-blocking)
                 asyncio.create_task(

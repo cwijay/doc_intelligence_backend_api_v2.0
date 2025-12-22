@@ -22,7 +22,7 @@ class TestUserServiceModelConversion:
     def test_model_to_pydantic_conversion(self):
         """Test conversion from SQLAlchemy model to Pydantic model."""
         from app.services.user_service import UserService
-        from app.core.db_models import UserModel
+        from biz2bricks_core import UserModel
 
         service = UserService()
 
@@ -60,7 +60,7 @@ class TestUserServiceVerifyOrganization:
     async def test_verify_organization_exists_success(self):
         """Test organization verification when organization exists."""
         from app.services.user_service import UserService
-        from app.core.db_models import OrganizationModel
+        from biz2bricks_core import OrganizationModel
 
         service = UserService()
         org_id = str(uuid.uuid4())

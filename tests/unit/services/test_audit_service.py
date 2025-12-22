@@ -23,7 +23,7 @@ class TestAuditServiceLogEvent:
     async def test_log_event_success(self):
         """Test successful audit event logging."""
         from app.services.audit_service import AuditService
-        from app.core.db_models import AuditAction, AuditEntityType
+        from biz2bricks_core import AuditAction, AuditEntityType
 
         service = AuditService()
         org_id = str(uuid.uuid4())
@@ -58,7 +58,7 @@ class TestAuditServiceLogEvent:
     async def test_log_event_database_error_returns_none(self):
         """Test that database errors return None instead of raising."""
         from app.services.audit_service import AuditService
-        from app.core.db_models import AuditAction, AuditEntityType
+        from biz2bricks_core import AuditAction, AuditEntityType
         from sqlalchemy.exc import SQLAlchemyError
 
         service = AuditService()
@@ -86,7 +86,7 @@ class TestAuditServiceLogEvent:
     async def test_log_event_unexpected_error_returns_none(self):
         """Test that unexpected errors return None instead of raising."""
         from app.services.audit_service import AuditService
-        from app.core.db_models import AuditAction, AuditEntityType
+        from biz2bricks_core import AuditAction, AuditEntityType
 
         service = AuditService()
         org_id = str(uuid.uuid4())
@@ -140,7 +140,7 @@ class TestAuditServiceLogEvent:
     async def test_log_event_without_optional_fields(self):
         """Test logging without optional fields."""
         from app.services.audit_service import AuditService
-        from app.core.db_models import AuditAction, AuditEntityType
+        from biz2bricks_core import AuditAction, AuditEntityType
 
         service = AuditService()
         org_id = str(uuid.uuid4())
@@ -173,7 +173,7 @@ class TestAuditServiceGetAuditLogs:
         """Test basic audit log query."""
         from app.services.audit_service import AuditService
         from app.models.schemas import PaginationParams
-        from app.core.db_models import AuditLogModel
+        from biz2bricks_core import AuditLogModel
 
         service = AuditService()
         org_id = str(uuid.uuid4())
@@ -222,7 +222,7 @@ class TestAuditServiceGetAuditLogs:
         """Test audit log query with filters."""
         from app.services.audit_service import AuditService
         from app.models.schemas import PaginationParams
-        from app.core.db_models import AuditAction, AuditEntityType
+        from biz2bricks_core import AuditAction, AuditEntityType
 
         service = AuditService()
         org_id = str(uuid.uuid4())
@@ -308,7 +308,7 @@ class TestAuditServiceGetEntityHistory:
     async def test_get_entity_history_success(self):
         """Test getting entity history."""
         from app.services.audit_service import AuditService
-        from app.core.db_models import AuditEntityType, AuditLogModel
+        from biz2bricks_core import AuditEntityType, AuditLogModel
 
         service = AuditService()
         org_id = str(uuid.uuid4())
@@ -344,7 +344,7 @@ class TestAuditServiceGetEntityHistory:
     async def test_get_entity_history_with_limit(self):
         """Test getting entity history with custom limit."""
         from app.services.audit_service import AuditService
-        from app.core.db_models import AuditEntityType
+        from biz2bricks_core import AuditEntityType
 
         service = AuditService()
         org_id = str(uuid.uuid4())
@@ -415,7 +415,7 @@ class TestAuditEnumConversion:
     @pytest.mark.unit
     def test_audit_action_value_extraction(self):
         """Test extracting value from AuditAction enum."""
-        from app.core.db_models import AuditAction
+        from biz2bricks_core import AuditAction
 
         action = AuditAction.CREATE
 
@@ -430,7 +430,7 @@ class TestAuditEnumConversion:
     @pytest.mark.unit
     def test_audit_entity_type_value_extraction(self):
         """Test extracting value from AuditEntityType enum."""
-        from app.core.db_models import AuditEntityType
+        from biz2bricks_core import AuditEntityType
 
         entity_type = AuditEntityType.USER
 
@@ -448,7 +448,7 @@ class TestAuditEnumConversion:
         action = "CREATE"
 
         # When it's already a string
-        from app.core.db_models import AuditAction
+        from biz2bricks_core import AuditAction
         if isinstance(action, AuditAction):
             value = action.value
         else:
