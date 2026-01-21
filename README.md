@@ -1064,6 +1064,185 @@ Expected response:
 - [ ] Authentication flow tested end-to-end
 - [ ] Document upload/download working
 
+## GCP Deployment (Consolidated)
+
+This section provides a comprehensive guide for deploying the Backend API to Google Cloud Run.
+
+### Prerequisites
+
+- **Google Cloud SDK** installed and configured
+- **Docker** installed locally
+- **GCP Project** with billing enabled
+- Cloud SQL instance provisioned (see [GCP Setup](#gcp-setup))
+
+```bash
+# Authenticate with Google Cloud
+gcloud auth login
+gcloud config set project YOUR_PROJECT_ID
+
+# Set up Application Default Credentials
+gcloud auth application-default login
+
+# Authenticate Docker with Artifact Registry
+gcloud auth configure-docker us-central1-docker.pkg.dev
+```
+
+### Required GCP APIs
+
+```bash
+gcloud services enable \
+  run.googleapis.com \
+  artifactregistry.googleapis.com \
+  cloudbuild.googleapis.com \
+  sqladmin.googleapis.com \
+  secretmanager.googleapis.com \
+  storage.googleapis.com
+```
+
+### Secrets Configuration
+
+Create secrets in Secret Manager:
+
+```bash
+# JWT Secret Key
+echo -n "your-256-bit-secret-key" | gcloud secrets create JWT_SECRET_KEY --data-file=-
+
+# Database Password
+echo -n "your-db-password" | gcloud secrets create DATABASE_PASSWORD --data-file=-
+
+# For production (with -prod suffix)
+echo -n "your-prod-jwt-secret" | gcloud secrets create JWT_SECRET_KEY-prod --data-file=-
+echo -n "your-prod-db-password" | gcloud secrets create DATABASE_PASSWORD-prod --data-file=-
+```
+
+Grant Cloud Run access to secrets:
+
+```bash
+PROJECT_NUMBER=$(gcloud projects describe $PROJECT_ID --format="value(projectNumber)")
+gcloud secrets add-iam-policy-binding JWT_SECRET_KEY \
+  --member="serviceAccount:$PROJECT_NUMBER-compute@developer.gserviceaccount.com" \
+  --role="roles/secretmanager.secretAccessor"
+
+gcloud secrets add-iam-policy-binding DATABASE_PASSWORD \
+  --member="serviceAccount:$PROJECT_NUMBER-compute@developer.gserviceaccount.com" \
+  --role="roles/secretmanager.secretAccessor"
+```
+
+### Manual Deployment
+
+```bash
+# Build and deploy to development
+gcloud builds submit --config cloudbuild.yaml
+
+# Deploy to production
+gcloud builds submit --config cloudbuild.yaml \
+  --substitutions=_ENV=prod,_SERVICE_NAME=document-intelligence-api-prod,_SECRET_SUFFIX=-prod
+```
+
+### CI/CD Triggers
+
+Set up automatic deployments from GitHub:
+
+```bash
+# Run the setup script
+./scripts/gcp/setup_triggers.sh
+```
+
+**Trigger Configuration:**
+
+| Trigger | Branch | Service Name | Secret Suffix |
+|---------|--------|--------------|---------------|
+| `backend-api-dev-deploy` | `develop` | `document-intelligence-api-dev` | (none) |
+| `backend-api-prod-deploy` | `master` | `document-intelligence-api-prod` | `-prod` |
+
+### Cloud Run Service Details
+
+| Setting | Development | Production |
+|---------|-------------|------------|
+| Service Name | `document-intelligence-api-dev` | `document-intelligence-api-prod` |
+| Port | 8080 | 8080 |
+| Memory | 1Gi | 1Gi |
+| CPU | 1 | 1 |
+| Max Instances | 5 | 10 |
+| Cloud SQL | Connected via Auth Proxy | Connected via Auth Proxy |
+
+### Required IAM Roles
+
+The Cloud Run service account needs:
+
+| Role | Purpose |
+|------|---------|
+| `roles/cloudsql.client` | Connect to Cloud SQL |
+| `roles/storage.objectAdmin` | Access GCS bucket |
+| `roles/logging.logWriter` | Write logs |
+| `roles/secretmanager.secretAccessor` | Access secrets |
+
+### Verification
+
+```bash
+# Get service URL
+SERVICE_URL=$(gcloud run services describe document-intelligence-api-dev \
+  --region=us-central1 --format="value(status.url)")
+
+# Test health endpoint
+curl "$SERVICE_URL/health"
+# Expected: {"status": "healthy"}
+
+# Test status endpoint (includes database connectivity)
+curl "$SERVICE_URL/status"
+# Expected: {"application": {...}, "services": {"postgresql": {"status": "connected"}}}
+```
+
+### Rollback
+
+```bash
+# List recent revisions
+gcloud run revisions list \
+  --service=document-intelligence-api-dev \
+  --region=us-central1
+
+# Rollback to a specific revision
+./scripts/gcp/rollback.sh document-intelligence-api-dev REVISION_NAME
+
+# Or manually route traffic
+gcloud run services update-traffic document-intelligence-api-dev \
+  --region=us-central1 \
+  --to-revisions=REVISION_NAME=100
+```
+
+### Troubleshooting
+
+**Health check failing (503)?**
+```bash
+# Check database connectivity settings
+# Ensure CLOUD_SQL_IP_TYPE=PUBLIC (not PRIVATE) unless using VPC Connector
+
+# Verify Cloud SQL instance name
+gcloud sql instances describe doc-intelligence-db --format="value(connectionName)"
+
+# Check service account has cloudsql.client role
+gcloud projects get-iam-policy $PROJECT_ID \
+  --filter="bindings.members:compute@developer" \
+  --format="table(bindings.role)"
+```
+
+**Container not starting?**
+```bash
+# Check container logs for startup errors
+gcloud logging read "resource.type=cloud_run_revision AND \
+  resource.labels.service_name=document-intelligence-api-dev" \
+  --limit=50 --format="table(timestamp,textPayload)"
+```
+
+**Secret access denied?**
+```bash
+# Verify secret exists
+gcloud secrets versions access latest --secret=JWT_SECRET_KEY
+
+# Check IAM binding
+gcloud secrets get-iam-policy JWT_SECRET_KEY
+```
+
 ---
 
 **Need help?** Check the troubleshooting section or review logs with `DEBUG=True`.
