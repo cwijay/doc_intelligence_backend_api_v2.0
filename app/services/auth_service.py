@@ -731,6 +731,7 @@ class AuthService:
         full_name: str,
         username: str,
         organization_id: str,
+        plan_type: Optional["PlanType"] = None,
     ) -> Tuple[str, Dict[str, Any]]:
         """
         Simple MVP registration by joining an existing organization.
@@ -767,6 +768,20 @@ class AuthService:
                     error=str(e),
                 )
                 raise RegistrationError("Invalid organization selected")
+
+            # Update organization plan_type if provided
+            if plan_type is not None:
+                from app.models.schemas.organization import OrganizationUpdate
+
+                await organization_service.update_organization(
+                    org_id=organization_id,
+                    update_data=OrganizationUpdate(plan_type=plan_type),
+                )
+                self.logger.info(
+                    "Organization plan updated during registration",
+                    org_id=organization_id,
+                    plan_type=plan_type.value if hasattr(plan_type, "value") else plan_type,
+                )
 
             # Create the user - they join as regular user (not admin)
             from app.models.schemas import UserCreate

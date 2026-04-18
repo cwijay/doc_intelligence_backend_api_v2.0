@@ -386,6 +386,7 @@ async def register(request: RegisterRequest) -> AuthResponse:
             full_name=request.full_name,
             username=request.username,
             organization_id=request.organization_id,
+            plan_type=request.plan_type,
         )
 
         logger.info(

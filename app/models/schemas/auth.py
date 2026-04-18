@@ -44,7 +44,7 @@ class RegisterRequest(BaseModel):
     )
     domain: Optional[str] = Field(None, description="Deprecated: not used in MVP")
     plan_type: Optional[PlanType] = Field(
-        None, description="Deprecated: not used in MVP"
+        None, description="Organization plan type to set during registration"
     )
 
     @field_validator("email")
