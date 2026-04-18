@@ -6,6 +6,10 @@ __pycache__/
 .env.dev
 .env.production
 
+# Cloud Run env-vars files (contain secrets — keep local only)
+development-env.yaml
+production-env.yaml
+
 # C extensions
 *.so
 .env.test

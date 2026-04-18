@@ -66,6 +66,19 @@ env_get() {
     echo "$default"
 }
 
+env_unset() {
+    local key="$1"
+    local new_keys=() new_values=()
+    for i in "${!ENV_KEYS[@]}"; do
+        if [[ "${ENV_KEYS[$i]}" != "$key" ]]; then
+            new_keys+=("${ENV_KEYS[$i]}")
+            new_values+=("${ENV_VALUES[$i]}")
+        fi
+    done
+    ENV_KEYS=("${new_keys[@]}")
+    ENV_VALUES=("${new_values[@]}")
+}
+
 trim() {
     local var="$1"
     var="${var#"${var%%[![:space:]]*}"}"
@@ -200,6 +213,7 @@ deploy_cloud_run() {
     local service="$1" region="$2" image="$3" env_file="$4"
     local memory="$5" cpu="$6" concurrency="$7" max_instances="$8"
     local timeout="$9" service_account="${10}" cloud_sql_instance="${11}"
+    local secrets_spec="${12-}"
 
     log_info "Deploying Cloud Run service '$service' in region '$region'"
 
@@ -223,6 +237,12 @@ deploy_cloud_run() {
     if [[ -n "$cloud_sql_instance" ]]; then
         log_info "Adding Cloud SQL instance: $cloud_sql_instance"
         deploy_cmd+=(--add-cloudsql-instances "$cloud_sql_instance")
+    fi
+
+    # Wire Secret Manager references if provided
+    if [[ -n "$secrets_spec" ]]; then
+        log_info "Wiring secrets from Secret Manager: $secrets_spec"
+        deploy_cmd+=(--update-secrets "$secrets_spec")
     fi
 
     "${deploy_cmd[@]}"
@@ -461,6 +481,13 @@ run_deploy_mode() {
         log_warn "CLOUD_SQL_INSTANCE not set in env file - database connection may fail"
     fi
 
+    # Move sensitive values to Secret Manager references (matches cloudbuild.yaml)
+    local secret_suffix=""
+    [[ "$environment" == "production" ]] && secret_suffix="-prod"
+    env_unset "JWT_SECRET_KEY"
+    env_unset "DATABASE_PASSWORD"
+    local secrets_spec="JWT_SECRET_KEY=JWT_SECRET_KEY${secret_suffix}:latest,DATABASE_PASSWORD=DATABASE_PASSWORD${secret_suffix}:latest"
+
     # Create temp env file
     local tmp_env_file
     tmp_env_file="$(mktemp)"
@@ -475,7 +502,7 @@ run_deploy_mode() {
 
     # Deploy to Cloud Run
     deploy_cloud_run "$service_name" "$region" "$latest_tag" "$tmp_env_file" \
-        "$memory" "$cpu" "$concurrency" "$max_instances" "$timeout" "$service_account" "$cloud_sql_instance"
+        "$memory" "$cpu" "$concurrency" "$max_instances" "$timeout" "$service_account" "$cloud_sql_instance" "$secrets_spec"
 
     # Get service URL
     local service_url
