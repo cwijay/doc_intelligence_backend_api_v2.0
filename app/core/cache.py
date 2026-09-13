@@ -103,10 +103,18 @@ async def init_cache() -> None:
                 )
 
             # Connect to Redis
+            # NOTE: decode_responses must stay False. fastapi-cache2's
+            # RedisBackend uses JsonCoder, whose decode() calls
+            # value.decode() expecting raw bytes from the client. With
+            # decode_responses=True the client returns str instead, and
+            # every cache HIT raises AttributeError: 'str' object has no
+            # attribute 'decode'. This was invisible with the in-memory
+            # backend because it stores objects by reference and never
+            # round-trips them through JsonCoder.
             redis_client = aioredis.from_url(
                 redis_url,
                 encoding="utf-8",
-                decode_responses=True,
+                decode_responses=False,
             )
 
             # Test connection
