@@ -17,6 +17,7 @@ from app.core.config import settings
 from app.core.logging import get_logger
 from app.core.db_client import db
 from app.core.cache import get_cache_status
+from app.core.gcs_client import get_gcs_status
 
 logger = get_logger(__name__)
 
@@ -100,8 +101,15 @@ async def detailed_status() -> Dict[str, Any]:
         # Get database health
         db_available = await db.test_connection(timeout=5.0)
 
+        # Object storage health. "disabled" means storage was never configured
+        # here, which is a valid deployment; only a configured-but-failed
+        # client ("unavailable") is a fault, and it takes document upload and
+        # download down with it.
+        gcs = get_gcs_status()
+        gcs_failed = gcs["status"] == "unavailable"
+
         # Overall status
-        overall_status = "healthy" if db_available else "degraded"
+        overall_status = "healthy" if db_available and not gcs_failed else "degraded"
 
         status_response = {
             "application": {
@@ -120,6 +128,7 @@ async def detailed_status() -> Dict[str, Any]:
                     "pool_stats": db.get_pool_stats(),
                 },
                 "cache": get_cache_status(),
+                "gcs": gcs,
             },
             "configuration": {
                 "cors_enabled": True,

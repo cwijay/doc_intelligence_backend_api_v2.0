@@ -932,5 +932,55 @@ def get_gcs_client() -> GCSClient:
     return GCSClient()
 
 
+def get_gcs_status(client: Optional[GCSClient] = None) -> Dict[str, Any]:
+    """
+    Get current object-storage status for health/status endpoints.
+
+    Reports the client's cached initialisation state and makes no network
+    call, matching get_cache_status(). A live round trip on every /status
+    request would add latency, and health_check() is synchronous, so calling
+    it from the async handler would block the event loop.
+
+    Three states, deliberately distinct:
+      connected   - client initialised, uploads and downloads work
+      unavailable - a bucket is configured but initialisation failed; the
+                    reason is carried in "error"
+      disabled    - no project id configured, so storage was never meant to
+                    run here (a legitimate deployment, not a failure)
+
+    Args:
+        client: Client to report on. Defaults to the singleton; injectable
+            for tests, which cannot construct a GCSClient without network.
+
+    Returns:
+        dict with object storage configuration and status
+    """
+    client = client if client is not None else get_gcs_client()
+
+    configured = bool(settings.GCP_PROJECT_ID and settings.GCS_BUCKET_NAME)
+
+    if client.is_initialized:
+        gcs_status = "connected"
+    elif configured:
+        gcs_status = "unavailable"
+    else:
+        gcs_status = "disabled"
+
+    status: Dict[str, Any] = {
+        "status": gcs_status,
+        "configured": configured,
+        "bucket": settings.GCS_BUCKET_NAME or None,
+        "project_id": settings.GCP_PROJECT_ID or None,
+    }
+
+    if client.initialization_error:
+        status["error"] = client.initialization_error
+
+    return status
+
+
+# Global client instance
+gcs_client = get_gcs_client()
+
 # Global client instance
 gcs_client = get_gcs_client()
