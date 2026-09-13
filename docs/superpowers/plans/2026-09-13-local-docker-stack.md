@@ -760,10 +760,15 @@ env — they are compiled into the client bundle.
 ```bash
 docker compose up -d --build frontend
 sleep 20
-docker compose exec -T frontend wget -qO- http://localhost:3000 | head -5
+docker compose exec -T frontend wget -qO- http://127.0.0.1:3000 | head -5
 ```
 
-Expected: HTML output beginning with a doctype.
+Use `127.0.0.1`, not `localhost`. Inside the container `localhost` resolves to
+`::1` first and Next.js binds IPv4 only, so `wget http://localhost:3000` fails
+with connection refused on a perfectly healthy container.
+
+Expected: HTML, or a 307 redirect to `/register` — the app redirects
+unauthenticated visitors, so a redirect is success, not failure.
 
 - [ ] **Step 3: Verify the API URL was baked in, not left blank**
 
@@ -871,7 +876,11 @@ curl -s -o /dev/null -w '%{http_code}\n' -H "Host: ai.${PUBLIC_DOMAIN}"  http://
 curl -s -w '%{http_code}\n' -H "Host: nope.${PUBLIC_DOMAIN}" http://localhost:8080/
 ```
 
-Expected: `200`, `200`, `200`, then `unknown host404`.
+Expected: `307`, `200`, `200`, then `unknown host404`.
+
+The first is `307`, not `200` — the frontend redirects unauthenticated visitors
+to `/register`. That is the app's own auth behaviour and proves routing worked;
+a `404` there would be the routing failure.
 
 A 404 on the `api` line usually means `TrustedHostMiddleware` rejected the host —
 confirm `ALLOWED_HOST_PATTERNS` in the `api` service includes `*.${PUBLIC_DOMAIN}`.
