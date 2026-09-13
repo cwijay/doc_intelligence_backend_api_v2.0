@@ -72,12 +72,22 @@ docker logs -f b2blocal-postgres
 ./start_backend.sh --port 8080 --no-reload
 ```
 
+## Object storage
+
+Document upload and download use the real GCS bucket
+(`biz2bricks-dev-v1-document-store`), the same one the self-hosted stack uses.
+`start_backend.sh` picks up the service-account key from
+`../biz2bricks_stack/secrets/gcp-sa-key.json` by default; override with
+`GCP_SA_KEY_FILE` in `.env.local`. The startup banner shows which bucket is in
+use, or `disabled` when no key is found.
+
+The key is a service account rather than your personal `gcloud` credentials on
+purpose. Application Default Credentials from `gcloud auth application-default
+login` cannot sign URLs without an extra `iam.serviceAccounts.signBlob` grant,
+so document *downloads* would fail even when uploads worked.
+
 ## What does not work locally
 
-- **Document upload and download.** No GCS credentials are configured, so
-  `GCSClient` stays inert. The API boots and everything else works; document
-  endpoints return errors. Fixed either by configuring GCS or by the planned
-  MinIO migration.
 - **AI features.** The AI service is a separate application and is not started
   here. It also needs provider API keys.
 

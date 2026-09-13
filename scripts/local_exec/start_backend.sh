@@ -91,10 +91,35 @@ export JWT_SECRET_KEY REFRESH_SECRET_KEY
 # CORS for a Next.js dev frontend.
 export CORS_ORIGINS='["http://localhost:3000","http://127.0.0.1:3000"]'
 
-# Object storage is not wired up locally. With no credentials present,
-# GCSClient._should_initialize() returns False and the client stays inert —
-# the API boots fine, but document upload and download are unavailable.
-unset GOOGLE_APPLICATION_CREDENTIALS || true
+# --------------------------------------------------------- object storage ----
+# Use a service-account key so local dev hits the same GCS bucket as the
+# self-hosted stack, and so signed-URL downloads work: user credentials from
+# `gcloud auth application-default login` cannot sign URLs without an extra
+# iam.serviceAccounts.signBlob grant, whereas a key signs locally.
+#
+# Unsetting GOOGLE_APPLICATION_CREDENTIALS does NOT disable GCS, which is what
+# the previous version of this block assumed. _should_initialize() in
+# app/core/gcs_client.py also accepts ambient ADC via google.auth.default(), so
+# a leftover personal ADC on the machine makes the client initialise against
+# the wrong identity and then fail the bucket probe. Blanking GCP_PROJECT_ID is
+# what actually forces disabled mode, because _should_initialize() requires
+# credentials AND a project id.
+GCP_SA_KEY_FILE="${GCP_SA_KEY_FILE:-$REPO_ROOT/../biz2bricks_stack/secrets/gcp-sa-key.json}"
+if [[ -f "$GCP_SA_KEY_FILE" ]]; then
+    export GOOGLE_APPLICATION_CREDENTIALS="$GCP_SA_KEY_FILE"
+    # GCS_BUCKET_NAME is read by pydantic from the repo .env, not by this
+    # shell, so read it back for the banner rather than printing a guess.
+    _bucket="${GCS_BUCKET_NAME:-$(sed -n 's/^GCS_BUCKET_NAME=//p' "$REPO_ROOT/.env" 2>/dev/null | tr -d '"' | head -1)}"
+    STORAGE_DESC="gs://${_bucket:-unknown-bucket}"
+    ok "Object storage enabled (key: $GCP_SA_KEY_FILE)"
+else
+    unset GOOGLE_APPLICATION_CREDENTIALS || true
+    export GCP_PROJECT_ID=""
+    STORAGE_DESC="disabled (no service-account key)"
+    warn "No service-account key at $GCP_SA_KEY_FILE"
+    warn "Object storage disabled - document upload and download will not work."
+    warn "Set GCP_SA_KEY_FILE in $ENV_FILE to point at a key."
+fi
 
 # `redis` is an optional extra in pyproject.toml. Without it the cache layer
 # silently falls back to in-memory, which hides Redis-specific bugs — exactly
@@ -115,6 +140,7 @@ ${GREEN}Starting backend API${NC}
   Docs       http://${HOST}:${PORT}/docs
   Database   localhost:${POSTGRES_HOST_PORT}/${DATABASE_NAME}
   Cache      redis localhost:${REDIS_HOST_PORT}
+  Storage    ${STORAGE_DESC}
   Org ID     ${BOOTSTRAP_ORG_ID:-<run setup_infra.sh>}
   Reload     ${RELOAD}
 
