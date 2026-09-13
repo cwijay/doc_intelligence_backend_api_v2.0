@@ -164,3 +164,6 @@ scripts/setup_secrets.sh.log
 cloudbuild-local.yaml
 .gcloud/test_output.txt
 deployment.log
+
+# SDD scratch workspace (ledger, briefs, reports)
+.superpowers/
