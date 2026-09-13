@@ -38,7 +38,7 @@ WORKDIR /app
 COPY pyproject.toml uv.lock ./
 
 # Install Python dependencies with UV (much faster than pip)
-RUN uv sync --frozen --no-cache --no-dev
+RUN uv sync --frozen --no-cache --no-dev --extra redis
 
 # Copy application code
 COPY app/ ./app/
