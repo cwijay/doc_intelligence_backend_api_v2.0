@@ -237,10 +237,12 @@ networks:
   default:
     # Docker's default address pools can be exhausted on a machine already running
     # several compose projects; without this the network create fails with
-    # "all predefined address pools have been fully subnetted".
+    # "all predefined address pools have been fully subnetted". Pick a range
+    # outside the exhausted 172.16-172.31 and 192.168.x defaults rather than
+    # reclaiming another project's network.
     ipam:
       config:
-        - subnet: 172.28.0.0/16
+        - subnet: 10.55.0.0/24
 
 volumes:
   pgdata:
