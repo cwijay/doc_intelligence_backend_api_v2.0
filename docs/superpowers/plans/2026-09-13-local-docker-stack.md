@@ -233,6 +233,15 @@ services:
       timeout: 3s
       retries: 12
 
+networks:
+  default:
+    # Docker's default address pools can be exhausted on a machine already running
+    # several compose projects; without this the network create fails with
+    # "all predefined address pools have been fully subnetted".
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
+
 volumes:
   pgdata:
   redisdata:
@@ -275,13 +284,17 @@ USE_CLOUD_SQL_CONNECTOR=false
 DATABASE_URL=postgresql+asyncpg://postgres:CHANGE_ME@localhost:5432/doc_intelligence
 DATABASE_NAME=doc_intelligence
 DATABASE_USER=postgres
+# `db init` reads DATABASE_URL alone, but `seed tiers` builds its own connection
+# from the individual fields and fails with "password authentication failed"
+# without this line. Both are required.
+DATABASE_PASSWORD=CHANGE_ME
 EOF
 # substitute the real POSTGRES_PASSWORD into /tmp/stack-db.env first
 uv run biz2bricks db init --env-file /tmp/stack-db.env
 uv run biz2bricks seed tiers --env-file /tmp/stack-db.env
 ```
 
-- [ ] **Step 6: Verify the 18 expected tables exist**
+- [ ] **Step 6: Verify the expected tables exist**
 
 ```bash
 cd ../biz2bricks_stack
@@ -290,14 +303,152 @@ docker compose exec -T postgres psql -U postgres -d doc_intelligence \
   -c "SELECT count(*) FROM subscription_tiers;"
 ```
 
-Expected: `organizations`, `users`, `folders`, `documents`, `audit_logs` and the
-usage/AI tables are listed; the tier count is greater than zero.
+Expected: 21 tables. `organizations`, `users`, `folders`, `documents` and
+`audit_logs` must all be present, alongside the usage, AI and session tables. The
+tier count must be greater than zero (currently 3). Older docs cite 18 tables —
+the schema has grown; trust the named tables, not the count.
 
 - [ ] **Step 7: Commit**
 
 ```bash
 git add docker-compose.yml postgres-init/
 git commit -m "feat: add postgres (pgvector) and redis services"
+```
+
+---
+
+### Task 3a: litellm gateway (own instance)
+
+**Files:**
+- Create: `../biz2bricks_stack/litellm/config.yaml`
+- Modify: `../biz2bricks_stack/docker-compose.yml`
+- Modify: `../biz2bricks_stack/.env.example`
+
+**Interfaces:**
+- Consumes: nothing from earlier tasks
+- Produces: service `litellm` reachable in-network at `http://litellm:4000`; Task 4 sets
+  `OPENAI_API_BASE=http://litellm:4000/v1` and `OPENAI_API_KEY=${LITELLM_MASTER_KEY}`
+
+**Why this exists:** the platform owns its gateway rather than borrowing another
+project's container, so that project's compose lifecycle cannot take biz2bricks' model
+access down.
+
+**What this does NOT cover:** document parsing (`src/rag/gemini_parse_util.py`) and RAG
+(`src/rag/gemini_file_store.py`) call `google.genai.Client()` directly with file-upload
+semantics. These are not chat completions and cannot be proxied by litellm.
+`GOOGLE_API_KEY` therefore stays a direct dependency of the AI service.
+
+- [ ] **Step 1: Add gateway variables to `.env.example`**
+
+Append:
+
+```bash
+# ---- litellm gateway ----
+# The AI service authenticates to litellm with this value; litellm then uses the
+# provider keys below. Generate with: python3 -c "import secrets; print('sk-'+secrets.token_hex(24))"
+LITELLM_MASTER_KEY=
+# Upstream provider key litellm uses on your behalf. Leave empty until you have one —
+# the container still starts, and model calls fail with a clear auth error.
+LITELLM_OPENAI_API_KEY=
+```
+
+- [ ] **Step 2: Write `litellm/config.yaml`**
+
+Two models are served: `gpt-5.6-terra` and `gpt-5.6-luna`. The AI service's own
+defaults (`gpt-5.1-codex-mini`, `gpt-4o-mini`, `gpt-5-mini`) are NOT used — Task 4
+overrides every model env var explicitly, so the gateway serves only what is
+actually requested.
+
+```yaml
+model_list:
+  - model_name: gpt-5.6-terra
+    litellm_params:
+      model: openai/gpt-5.6-terra
+      api_key: os.environ/LITELLM_OPENAI_API_KEY
+  - model_name: gpt-5.6-luna
+    litellm_params:
+      model: openai/gpt-5.6-luna
+      api_key: os.environ/LITELLM_OPENAI_API_KEY
+
+router_settings:
+  num_retries: 2
+  timeout: 120
+  fallbacks:
+    - gpt-5.6-terra: [gpt-5.6-luna]
+
+litellm_settings:
+  drop_params: true
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+```
+
+No `database_url` is set, so litellm runs keyless-mode with the master key only —
+no extra Postgres, no virtual-key management to maintain. No `success_callback` is
+set either; this instance deliberately has no Langfuse dependency.
+
+- [ ] **Step 3: Add the `litellm` service to `docker-compose.yml`**
+
+```yaml
+  litellm:
+    image: ghcr.io/berriai/litellm:main-stable
+    restart: unless-stopped
+    command: ["--config", "/app/config.yaml", "--port", "4000"]
+    environment:
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY}
+      LITELLM_OPENAI_API_KEY: ${LITELLM_OPENAI_API_KEY}
+    volumes:
+      - ./litellm/config.yaml:/app/config.yaml:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4000/health/liveliness"]
+      interval: 15s
+      timeout: 5s
+      start_period: 30s
+      retries: 5
+```
+
+No host port is published — port 4000 is already taken on this machine by another
+project's gateway, and nothing outside the compose network needs to reach this one.
+
+- [ ] **Step 4: Start it and verify liveness**
+
+```bash
+cd ../biz2bricks_stack
+docker compose up -d litellm
+sleep 30
+docker compose ps --format '{{.Service}} {{.Health}}' | grep litellm
+```
+
+Expected: `litellm healthy`
+
+- [ ] **Step 5: Verify the model list is served and matches the AI service's names**
+
+```bash
+docker compose exec -T litellm \
+  curl -s -H "Authorization: Bearer ${LITELLM_MASTER_KEY}" http://localhost:4000/v1/models
+```
+
+Expected: a JSON list containing exactly `gpt-5.6-terra` and `gpt-5.6-luna`. A 401
+means `LITELLM_MASTER_KEY` is not set in `.env`. If litellm logs an unknown-model
+error at startup, correct the IDs in `config.yaml` — they are passed through to
+OpenAI verbatim and have not been validated against a live account.
+
+This verifies routing and naming only. It does not verify that upstream calls
+succeed — that needs a real `LITELLM_OPENAI_API_KEY` and is covered by Task 10.
+
+- [ ] **Step 6: Confirm the borrowed gateway is untouched**
+
+```bash
+docker ps --format '{{.Names}}' | grep -c '^infra-litellm-1$'
+```
+
+Expected: `1` — the other project's gateway is still running and was not modified.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add litellm/config.yaml docker-compose.yml .env.example
+git commit -m "feat: add own litellm gateway instance"
 ```
 
 ---
@@ -462,6 +613,7 @@ including WeasyPrint's native dependencies, so no Dockerfile change is needed.
     restart: unless-stopped
     depends_on:
       postgres: {condition: service_healthy}
+      litellm: {condition: service_healthy}
     environment:
       PORT: 8001
       LOG_LEVEL: INFO
@@ -483,8 +635,20 @@ including WeasyPrint's native dependencies, so no Dockerfile change is needed.
       GENERATED_DIRECTORY: generated
       GOOGLE_APPLICATION_CREDENTIALS: /secrets/gcp-sa-key.json
 
-      # Remote model APIs
-      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      # Chat models route through the stack's own litellm gateway.
+      # langchain-openai reads OPENAI_API_BASE, so no code change is needed.
+      OPENAI_API_BASE: http://litellm:4000/v1
+      OPENAI_API_KEY: ${LITELLM_MASTER_KEY}
+
+      # Pinned explicitly so the gateway only serves models it actually has.
+      # terra takes the reasoning-heavy paths, luna the summarisation path.
+      OPENAI_SHEET_MODEL: gpt-5.6-terra
+      EXTRACTOR_AGENT_MODEL: gpt-5.6-terra
+      DOCUMENT_AGENT_MODEL: gpt-5.6-luna
+      EXTRACTOR_FALLBACK_MODEL: gpt-5.6-luna
+
+      # Document parsing and RAG bypass litellm — they use the native google-genai
+      # SDK with file-upload semantics, which is not a chat-completions call.
       GOOGLE_API_KEY: ${GOOGLE_API_KEY}
       LLAMA_CLOUD_API_KEY: ${LLAMA_CLOUD_API_KEY}
       DOCUMENT_PARSER: gemini
