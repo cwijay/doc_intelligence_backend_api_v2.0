@@ -23,9 +23,11 @@ A **document management platform** built with FastAPI and PostgreSQL, featuring 
 - [GCP Setup](#gcp-setup)
 - [Environment Configuration](#environment-configuration)
 - [Development Server](#development-server)
+- [Local Dev Pointing at GCP Resources](#local-dev-pointing-at-gcp-resources)
 - [API Endpoints](#api-endpoints)
 - [Audit Logging](#audit-logging)
 - [Deployment](#deployment)
+- [Deploying to Cloud Run](#deploying-to-cloud-run)
 - [Project Structure](#project-structure)
 - [Testing](#testing)
 - [Troubleshooting](#troubleshooting)
@@ -482,6 +484,86 @@ USE_CLOUD_SQL_CONNECTOR=false
 # Initialize tables
 uv run python scripts/init_database.py
 ```
+
+## Local Dev Pointing at GCP Resources
+
+Run the FastAPI server on your laptop while connecting to the **shared dev Cloud SQL database and GCS bucket** in `biz2bricks-dev-v1`. Useful for reproducing issues against real data without spinning up local Postgres or deploying to Cloud Run.
+
+### How it works
+
+| Resource | Local dev (this mode) | Cloud Run |
+|----------|----------------------|-----------|
+| Postgres | Cloud SQL via Python Connector, `PUBLIC` IP | Cloud SQL via Python Connector |
+| Object storage | `gs://biz2bricks-dev-v1-document-store` | Same bucket |
+| Auth to GCP | Application Default Credentials on your machine | Service account on Cloud Run |
+| App secrets | Loaded from `.env.local-gcp` | Wired from Secret Manager |
+
+The Cloud SQL Python Connector handles TLS and IAM; no IP allowlisting needed.
+
+### One-time setup
+
+```bash
+# 1. Authenticate gcloud and ADC
+gcloud auth login
+gcloud auth application-default login
+gcloud auth application-default set-quota-project biz2bricks-dev-v1
+
+# 2. Make sure deps are installed
+uv sync
+```
+
+### Files
+
+| File | Purpose |
+|------|---------|
+| `.env.local-gcp` | Env vars: GCP project, Cloud SQL instance, GCS bucket, JWT secrets, CORS for `localhost:3000` |
+| `deploy-local-gcp.sh` | Sources the env, validates ADC + required vars, runs `uvicorn` with hot reload |
+
+`.env.local-gcp` is gitignored — it carries the dev DB password and JWT secret pulled from Secret Manager.
+
+### Run it
+
+```bash
+# default: http://127.0.0.1:8000 with autoreload
+./deploy-local-gcp.sh
+
+# common flags
+./deploy-local-gcp.sh --port 8080
+./deploy-local-gcp.sh --host 0.0.0.0      # expose on LAN
+./deploy-local-gcp.sh --no-reload         # disable autoreload
+```
+
+The script aborts early with a clear message if `.env.local-gcp` is missing, ADC is not configured, or any required env var is empty.
+
+### Verify
+
+```bash
+# health + DB connectivity
+curl http://127.0.0.1:8000/status
+
+# expected: {"application": {"status":"healthy"}, "services": {"postgresql": {"status":"connected"}}}
+```
+
+If `/status` reports the DB as connected, you're talking to the real Cloud SQL instance.
+
+### Refresh secrets from Secret Manager
+
+If the dev DB password or JWT secrets get rotated, refresh your local file:
+
+```bash
+gcloud secrets versions access latest --secret=DATABASE_PASSWORD --project=biz2bricks-dev-v1
+gcloud secrets versions access latest --secret=JWT_SECRET_KEY     --project=biz2bricks-dev-v1
+gcloud secrets versions access latest --secret=REFRESH_SECRET_KEY --project=biz2bricks-dev-v1
+```
+
+Paste the new values into `.env.local-gcp` and restart the server.
+
+### Common gotchas
+
+- **`Application Default Credentials missing`** → run `gcloud auth application-default login` again; tokens expire.
+- **`Cloud SQL Connector timed out`** → your IP may be blocked by an org policy, or the instance is starting. Check `gcloud sql instances describe doc-intelligence-db --project=biz2bricks-dev-v1`.
+- **Editing CORS in `.env.local-gcp`** → JSON-array values **must** be single-quoted (e.g. `ALLOWED_FILE_TYPES='["pdf","xlsx"]'`); otherwise `bash` word-splits them on `source`.
+- **Mutating data hits the shared dev DB** — coordinate with the team before destructive actions.
 
 ## Development Server
 
@@ -1064,11 +1146,19 @@ Expected response:
 - [ ] Authentication flow tested end-to-end
 - [ ] Document upload/download working
 
-## GCP Deployment (Consolidated)
+## Deploying to Cloud Run
 
-This section provides a comprehensive guide for deploying the Backend API to Google Cloud Run.
+End-to-end guide for shipping the API to Google Cloud Run. There are three paths depending on what you need:
 
-### Prerequisites
+| Path | When to use | Command |
+|------|-------------|---------|
+| **Cloud Build (recommended)** | CI/CD or one-shot deploys triggered from the repo | `gcloud builds submit --config cloudbuild.yaml` |
+| **`./deploy.sh --deploy`** | Local Docker build + push + Cloud Run update from your laptop | `./deploy.sh --deploy --project-id biz2bricks-dev-v1` |
+| **`./deploy.sh --fast`** | Quick redeploy when infra already exists (skips IAM/bucket checks) | `./deploy.sh --fast --project-id biz2bricks-dev-v1` |
+
+Both `--deploy` and `--fast` reuse `development-env.yaml` / `production-env.yaml` for env vars and pull `JWT_SECRET_KEY` + `DATABASE_PASSWORD` from Secret Manager (with `-prod` suffix in production).
+
+### Prerequisites for Cloud Run deployment
 
 - **Google Cloud SDK** installed and configured
 - **Docker** installed locally
