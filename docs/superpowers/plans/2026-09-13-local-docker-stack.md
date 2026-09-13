@@ -580,15 +580,29 @@ docker compose exec -T api curl -sf http://localhost:8000/health \
 
 Expected: a JSON health payload, HTTP 200.
 
-- [ ] **Step 6: Verify Postgres, GCS and Redis are all wired**
+- [ ] **Step 6: Verify Postgres and Redis are wired**
 
 ```bash
 docker compose exec -T api curl -s http://localhost:8000/status
 ```
 
-Expected: the payload reports PostgreSQL reachable and GCS initialised. A GCS
-failure here means the key mount or `GCP_PROJECT_ID` is wrong — check
-`docker compose logs api | grep -i gcs`.
+Expected: `services.postgresql.status` is `connected`, and `services.cache`
+reports `backend: redis` with `initialized: true`. If `cache.backend` says
+`memory` while `configured_backend` says `redis`, the image was built without
+`--extra redis` — redo step 2.
+
+`/status` does NOT report object storage — `app/api/health.py` has no GCS
+branch — so there is nothing to check for it here. Verify storage separately:
+
+```bash
+docker inspect biz2bricks-api-1 --format 'restarts={{.RestartCount}}'
+docker compose logs api 2>&1 | grep -iE 'gcs|storage' | tail -5
+```
+
+Expected: `restarts=0`. With credentials present, a "Connected to GCS bucket"
+line appears. With none, `GCSClient._should_initialize()` returns False and the
+client stays inert — benign google-auth probe warnings are normal and are not a
+failure. Either way the container must not restart.
 
 - [ ] **Step 7: Commit**
 
