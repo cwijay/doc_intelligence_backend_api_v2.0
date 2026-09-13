@@ -402,7 +402,12 @@ set either; this instance deliberately has no Langfuse dependency.
     volumes:
       - ./litellm/config.yaml:/app/config.yaml:ro
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:4000/health/liveliness"]
+      # The litellm image ships no curl or wget, so a curl-based healthcheck
+      # fails with "executable file not found in $PATH" and the container
+      # never becomes healthy — which would block `ai` from ever starting,
+      # since it waits on litellm being healthy. Use the image's own python3.
+      test: ["CMD", "python3", "-c",
+             "import urllib.request; urllib.request.urlopen('http://localhost:4000/health/liveliness')"]
       interval: 15s
       timeout: 5s
       start_period: 30s
@@ -426,8 +431,13 @@ Expected: `litellm healthy`
 - [ ] **Step 5: Verify the model list is served and matches the AI service's names**
 
 ```bash
-docker compose exec -T litellm \
-  curl -s -H "Authorization: Bearer ${LITELLM_MASTER_KEY}" http://localhost:4000/v1/models
+KEY=$(grep -E '^LITELLM_MASTER_KEY=' .env | cut -d= -f2- | tr -d '"')
+docker compose exec -T litellm python3 -c "
+import urllib.request, json
+r = urllib.request.Request('http://localhost:4000/v1/models',
+                           headers={'Authorization':'Bearer $KEY'})
+print([m['id'] for m in json.load(urllib.request.urlopen(r))['data']])
+"
 ```
 
 Expected: a JSON list containing exactly `gpt-5.6-terra` and `gpt-5.6-luna`. A 401
