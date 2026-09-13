@@ -5,6 +5,7 @@ __pycache__/
 
 .env.dev
 .env.production
+.env.local-gcp
 
 # Cloud Run env-vars files (contain secrets — keep local only)
 development-env.yaml
@@ -13,7 +14,8 @@ production-env.yaml
 # C extensions
 *.so
 .env.test
-/docs
+/docs/*
+!/docs/superpowers/
 github-actions-sa-key.json
 
 # Distribution / packaging
