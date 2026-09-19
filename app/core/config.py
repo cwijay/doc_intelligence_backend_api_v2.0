@@ -114,6 +114,15 @@ class Settings(BaseSettings):
     GCS_BUCKET_NAME: str = "biz-to-bricks-document-store"
     DOCUMENT_STORE_BASE_PATH: str = ""  # Base path within bucket (empty for root)
 
+    # AI service (document-intelligence-ai-api) Configuration
+    #
+    # Used to de-index documents from the Gemini File Search store when they are
+    # deleted here. Deletion in this service is a SOFT delete, so without this call
+    # the document stays searchable and RAG keeps citing it.
+    # Leave unset to skip de-indexing (it is best-effort and never blocks a delete).
+    AI_API_URL: Optional[str] = None
+    AI_API_TIMEOUT_SECONDS: float = 10.0
+
     # Document Configuration
     MAX_FILE_SIZE: int = 50 * 1024 * 1024  # 50MB in bytes
     ALLOWED_FILE_TYPES: List[str] = ["pdf", "xlsx"]

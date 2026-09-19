@@ -10,16 +10,19 @@ This service handles core document lifecycle operations:
 """
 
 import asyncio
+import httpx
+from urllib.parse import quote
 from typing import Optional, Dict, Any
 from datetime import datetime, timezone
 from uuid import uuid4
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from fastapi import UploadFile
 
 from app.models.document import Document, DocumentStatus
 from app.models.schemas import DocumentResponse, DocumentUploadResponse
 from app.core.gcs_client import gcs_client, GCSClientError
+from app.core.config import settings
 from biz2bricks_core import DocumentModel, AuditAction, AuditEntityType
 from app.services.audit_service import audit_service
 from app.services.usage_enforcement import (
@@ -32,6 +35,19 @@ from .document_base_service import (
     DocumentValidationError,
     DocumentUploadError,
 )
+
+
+
+def _indexed_document_name(filename: str) -> str:
+    """
+    Map an uploaded filename to the name it is indexed under in File Search.
+
+    Documents are parsed to markdown before indexing, so "Sample1.pdf" is stored
+    as "Sample1.md". Both the semantic cache and the File Search store key on that
+    parsed name, not the original upload.
+    """
+    stem = filename.rsplit(".", 1)[0] if "." in filename else filename
+    return f"{stem}.md"
 
 
 class DocumentCrudService(DocumentBaseService):
@@ -510,6 +526,105 @@ class DocumentCrudService(DocumentBaseService):
             )
             raise DocumentUploadError(f"Failed to update document status: {e}")
 
+    async def _deindex_from_ai_service(
+        self, org_id: str, indexed_name: str, user_id: Optional[str] = None
+    ) -> None:
+        """
+        Ask the AI service to drop this document from its File Search index.
+
+        Deletion here is a SOFT delete, so the document survives in the AI service's
+        Gemini store unless we say so - and RAG then keeps answering from a file the
+        user believes is gone. That service owns the Gemini credentials, so this has
+        to go over HTTP rather than being done locally.
+
+        Best-effort by design: a delete must not fail because another service is
+        down. On failure the document lingers in the index until it is re-indexed
+        or reconciled, which is strictly better than refusing the user's delete.
+        """
+        base_url = settings.AI_API_URL
+        if not base_url:
+            self.logger.debug(
+                "AI_API_URL not configured; skipping de-index",
+                org_id=org_id,
+                indexed_name=indexed_name,
+            )
+            return
+
+        if not user_id:
+            # get_org_id on the AI service rejects requests without a user header
+            # (401), so there is no point making a call that cannot succeed.
+            self.logger.warning(
+                "No user id available for de-index call; document stays indexed",
+                org_id=org_id,
+                indexed_name=indexed_name,
+            )
+            return
+
+        url = f"{base_url.rstrip('/')}/api/v1/rag/documents/{quote(indexed_name, safe='')}"
+        # The AI service resolves the tenant from X-Organization-ID (UUID or name)
+        # and REQUIRES a user header, which it checks belongs to that organization.
+        headers = {"X-Organization-ID": org_id, "X-User-ID": user_id}
+        try:
+            async with httpx.AsyncClient(timeout=settings.AI_API_TIMEOUT_SECONDS) as client:
+                response = await client.delete(url, headers=headers)
+            if response.status_code >= 400:
+                self.logger.warning(
+                    "AI service rejected de-index request",
+                    org_id=org_id,
+                    indexed_name=indexed_name,
+                    status_code=response.status_code,
+                )
+            else:
+                self.logger.info(
+                    "Document de-indexed from AI service",
+                    org_id=org_id,
+                    indexed_name=indexed_name,
+                    result=response.json(),
+                )
+        except Exception as e:
+            self.logger.warning(
+                "Could not reach AI service to de-index document",
+                org_id=org_id,
+                indexed_name=indexed_name,
+                error=str(e),
+            )
+
+    async def _invalidate_rag_cache(
+        self, session, org_id: str, indexed_name: str
+    ) -> None:
+        """
+        Drop cached RAG answers that could quote the given document.
+
+        Never raises: cache invalidation is a consistency nicety and must not turn
+        a successful delete into a failed request. A miss here only means a stale
+        answer until the entry expires.
+        """
+        try:
+            result = await session.execute(
+                text("""
+                    DELETE FROM rag_query_cache
+                    WHERE org_id = :org_id
+                      AND (
+                            file_filter IS NULL
+                         OR :indexed_name = ANY(string_to_array(file_filter, ','))
+                      )
+                """),
+                {"org_id": org_id, "indexed_name": indexed_name},
+            )
+            self.logger.info(
+                "Invalidated RAG cache entries for deleted document",
+                org_id=org_id,
+                indexed_name=indexed_name,
+                entries_removed=result.rowcount,
+            )
+        except Exception as e:
+            self.logger.warning(
+                "Could not invalidate RAG cache for deleted document",
+                org_id=org_id,
+                indexed_name=indexed_name,
+                error=str(e),
+            )
+
     async def delete_document(
         self,
         org_id: str,
@@ -595,6 +710,29 @@ class DocumentCrudService(DocumentBaseService):
 
                 # Update storage usage (non-blocking)
                 asyncio.create_task(update_storage_after_delete(org_id, file_size))
+
+                # Invalidate the AI service's semantic RAG cache for this document.
+                #
+                # The cache lives in rag_query_cache in this same shared database
+                # (RAGQueryCache in biz2bricks_core). Without this, a cached answer
+                # keeps quoting a document the user just deleted - and because entries
+                # live for SEMANTIC_CACHE_TTL_HOURS, it can do so for a full day.
+                #
+                # The cache keys on the INDEXED name, which is the parsed markdown
+                # ("Sample1.md"), not the original upload ("Sample1.pdf").
+                # file_filter holds a sorted comma-joined list, so membership is tested
+                # with string_to_array rather than LIKE - '_' is a LIKE wildcard and
+                # would make "invoice_1.md" also match "invoice_11.md".
+                # A NULL file_filter marks a store-wide query, which may quote any
+                # document and is therefore dropped too.
+                indexed_name = _indexed_document_name(filename)
+                await self._invalidate_rag_cache(session, org_id, indexed_name)
+
+                # Remove it from the RAG index as well (non-blocking: the delete must
+                # not depend on the AI service being reachable).
+                asyncio.create_task(
+                    self._deindex_from_ai_service(org_id, indexed_name, deleted_by_user_id)
+                )
 
                 return {
                     "success": True,

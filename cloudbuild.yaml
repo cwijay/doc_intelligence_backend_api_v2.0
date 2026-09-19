@@ -96,7 +96,7 @@ steps:
           --timeout=60 \
           --port=8080 \
           --add-cloudsql-instances=${_CLOUD_SQL_INSTANCE} \
-          --update-env-vars=ENVIRONMENT=${_ENV},GCP_PROJECT_ID=$PROJECT_ID,LOG_LEVEL=${_LOG_LEVEL},LOG_FORMAT=json,GCS_BUCKET_NAME=${_GCS_BUCKET_NAME},FRONTEND_DOMAIN=${_FRONTEND_DOMAIN},MAX_FILE_SIZE=${_MAX_FILE_SIZE},CLOUD_SQL_INSTANCE=${_CLOUD_SQL_INSTANCE},USE_CLOUD_SQL_CONNECTOR=true,CLOUD_SQL_IP_TYPE=PUBLIC,DATABASE_NAME=${_DATABASE_NAME},DATABASE_USER=${_DATABASE_USER} \
+          --update-env-vars=ENVIRONMENT=${_ENV},GCP_PROJECT_ID=$PROJECT_ID,LOG_LEVEL=${_LOG_LEVEL},LOG_FORMAT=json,GCS_BUCKET_NAME=${_GCS_BUCKET_NAME},FRONTEND_DOMAIN=${_FRONTEND_DOMAIN},MAX_FILE_SIZE=${_MAX_FILE_SIZE},CLOUD_SQL_INSTANCE=${_CLOUD_SQL_INSTANCE},USE_CLOUD_SQL_CONNECTOR=true,CLOUD_SQL_IP_TYPE=PUBLIC,DATABASE_NAME=${_DATABASE_NAME},DATABASE_USER=${_DATABASE_USER},AI_API_URL=${_AI_API_URL} \
           --remove-env-vars=PRODUCTION_CORS_ORIGINS,ALLOWED_FILE_TYPES \
           --update-secrets=JWT_SECRET_KEY=JWT_SECRET_KEY${_SECRET_SUFFIX}:latest,DATABASE_PASSWORD=DATABASE_PASSWORD${_SECRET_SUFFIX}:latest \
           || exit 1
@@ -159,6 +159,10 @@ substitutions:
 
   # GCP settings
   _GCS_BUCKET_NAME: 'biz2bricks-dev-v1-document-store'
+
+  # AI service - used to de-index documents from Gemini File Search on delete.
+  # Deletion here is a soft delete, so without this the document stays searchable.
+  _AI_API_URL: 'https://document-intelligence-ai-api-dev-tfibpeg5zq-uc.a.run.app'
 
   # Cloud SQL settings
   _CLOUD_SQL_INSTANCE: 'biz2bricks-dev-v1:us-central1:doc-intelligence-db'
