@@ -132,7 +132,15 @@ are reviewable before anything is deployed.
 ## Out of scope
 
 The frontend Cloud Run service, the `doc_intelligence_ai_v3.0` service, the
-other four GCP projects, and the ~$60/month bill whose source remains
-unidentified. Two leads: project `biz2bricksv1` bills to a second billing
-account (`015507-E08C96-E8EB69`) not readable by the `cwijay@` login, and
-`dynamic-reef-473916-n3` has an Anthos / Config Controller stack enabled.
+other GCP projects, and the ~$60/month bill whose source remains unidentified.
+
+On 2026-09-19, `dynamic-reef-473916-n3` (`doc-intelligence-v1`) was swept and
+deleted. It was empty -- no GKE clusters, Config Controller, buckets, Firestore,
+secrets, disks, addresses, or registries -- so despite having the Anthos API
+surface enabled it was billing nothing and is ruled out as the cost source.
+Recoverable until roughly 2026-10-19 via `gcloud projects undelete`.
+
+The remaining lead is `biz2bricksv1`, which bills to a second billing account
+(`015507-E08C96-E8EB69`) not readable by the `cwijay@` login. It holds live
+`RegisteredUser` data in its `kwalityfoods` Firestore database and must not be
+deleted.
