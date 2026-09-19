@@ -34,9 +34,10 @@ hdr() { echo ""; echo "=== $1 ==="; }
 echo "Cost audit for project: $PROJECT_ID (region: $REGION)"
 
 hdr "Cloud SQL instances"
-echo "Watch for: a tier above db-f1-micro, REGIONAL availability (doubles cost),"
-echo "and PRIMARY in the IP list (a public IPv4 is ~\$7.30/month, billed even"
-echo "while the instance is stopped)."
+echo "Watch for: a tier above db-f1-micro and REGIONAL availability (doubles"
+echo "cost). A public IPv4 is free while the instance is RUNNING; it only costs"
+echo "~\$0.010/hr once the instance is stopped, so stopping an idle instance"
+echo "saves less than it looks."
 gcloud sql instances list \
     --project="$PROJECT_ID" \
     --format="table(
