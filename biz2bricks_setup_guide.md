@@ -23,6 +23,7 @@ Every gotcha in Part 7 is one we actually hit, not a hypothetical.
 9. [Cost management](#9-cost-management)
 10. [Before real users](#10-before-real-users)
 11. [Deployed services](#11-deployed-services-biz2bricks-dev-v1)
+12. [CORS between the services](#12-cors-between-the-services)
 
 ---
 
@@ -645,8 +646,9 @@ customer data lands:
 |---|---|---|
 | `document-intelligence-api-dev` | `https://document-intelligence-api-dev-tfibpeg5zq-uc.a.run.app` | `/health`, `/status` |
 | `document-intelligence-ai-api-dev` | `https://document-intelligence-ai-api-dev-tfibpeg5zq-uc.a.run.app` | `/health` only |
+| `document-intelligence-ui-dev` | `https://document-intelligence-ui-dev-tfibpeg5zq-uc.a.run.app` | `/` redirects to `/register` |
 
-Both run as `document-intelligence-api-sa@biz2bricks-dev-v1.iam.gserviceaccount.com`.
+All three run as `document-intelligence-api-sa@biz2bricks-dev-v1.iam.gserviceaccount.com`.
 
 > The AI service exposes **no `/status`** — it returns 404 there. Use `/health`,
 > which reports the database, document agent, sheets agent and LlamaParse
@@ -660,6 +662,65 @@ Shared infrastructure:
   `document-intelligence-api-dev` / `ai-api`
 - Secrets: `JWT_SECRET_KEY`, `REFRESH_SECRET_KEY`, `DATABASE_PASSWORD`,
   `openai-api-key`, `google-api-key`, `llamaparse-api-key`
+
+---
+
+## 12. CORS between the services
+
+Two separate mechanisms, and neither is obvious.
+
+### Backend API
+
+`PRODUCTION_CORS_ORIGINS` is **only read when `ENVIRONMENT=production`**. A
+development deploy ignores it entirely, even when the variable is set on the
+service — the app silently runs on its localhost-only defaults, and the frontend
+gets blocked with no clue why.
+
+For any non-production deploy use `ADDITIONAL_CORS_ORIGINS`, which applies in
+both environments:
+
+```bash
+gcloud run services update document-intelligence-api-dev --region=us-central1 \
+  --update-env-vars='^@^ADDITIONAL_CORS_ORIGINS=["https://<FRONTEND_URL>"]'
+```
+
+### AI service
+
+Reads `CORS_ORIGINS`, and **defaults to `["*"]` with `allow_credentials=True`**
+when unset. Starlette echoes the requesting origin back in that combination, so
+an unset value means any website can make credentialed calls — to a service
+deployed `--allow-unauthenticated` with OpenAI, Google and LlamaCloud keys
+mounted. Always set it:
+
+```bash
+gcloud run services update document-intelligence-ai-api-dev --region=us-central1 \
+  --update-env-vars='^@^CORS_ORIGINS=["https://<FRONTEND_URL>","http://localhost:3000"]'
+```
+
+### `--update-env-vars` and commas
+
+gcloud splits `--update-env-vars` on commas, so a JSON array value is parsed as
+several variables and the command fails. Prefix with `^@^` to change the
+delimiter to `@`, as above. A failed update leaves the variable **unset** rather
+than erroring loudly, so always verify:
+
+```bash
+gcloud run services describe <SERVICE> --region=us-central1 \
+  --format="value(spec.template.spec.containers[0].env)"
+```
+
+### Verifying CORS
+
+Anchor the grep to the header **name**. `access-control-allow-headers` lists
+`Access-Control-Allow-Origin` among its allowed header names, so an unanchored
+grep reports a leak that is not there:
+
+```bash
+curl -s -X OPTIONS "$BACKEND/api/v1/auth/login" \
+  -H "Origin: https://evil.example.com" \
+  -H "Access-Control-Request-Method: POST" -D - -o /dev/null \
+  | grep -iE "^access-control-allow-origin:"      # anchored; no output = refused
+```
 
 ---
 
