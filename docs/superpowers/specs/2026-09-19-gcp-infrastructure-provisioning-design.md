@@ -100,10 +100,19 @@ secrets. It does **not** create an Artifact Registry repository, and
 The repo must be created out of band or the first build fails. Once `deploy.sh`
 is repointed (see Decisions), both deploy paths target this one repo.
 
-Separately, `cloudbuild.yaml` references service account
-`727735128283-compute@developer.gserviceaccount.com`, which belongs to project
-`biz2bricksv1`, not `biz2bricks-dev-v1` (project number `726919062103`). This is
-corrected as part of this work.
+Separately, `cloudbuild.yaml:162` declares `_SERVICE_ACCOUNT` as
+`727735128283-compute@developer.gserviceaccount.com`, which belonged to project
+`biz2bricksv1` (deleted 2026-09-19). The substitution is never referenced by the
+`gcloud run deploy` step, so it is dead config rather than an active break, but
+it is removed as part of this work.
+
+`deploy.sh:428` and `deploy.sh:459` select a service account with
+`gcloud iam service-accounts list ... | head -n 1`, which returns whichever
+account sorts first rather than the intended one. In `biz2bricks-dev-v1` that is
+`github-actions-deployer@`, so the Cloud Run service would run as the CI deploy
+identity -- wrong, and more privileged than the service needs. Both call sites
+are changed to select `document-intelligence-api-sa@` explicitly and fail loudly
+if it is absent, rather than silently falling back.
 
 ## Sequence
 
@@ -112,7 +121,8 @@ corrected as part of this work.
    committed cleanup policy
 3. `biz2bricks provision full-setup` — Cloud SQL, bucket, service account, IAM
 4. Repoint `deploy.sh` at Artifact Registry and add the `configure-docker` step
-5. Correct the service account in `cloudbuild.yaml`
+5. Fix service account selection in `deploy.sh`; drop the dead `_SERVICE_ACCOUNT`
+   substitution from `cloudbuild.yaml`
 6. Deploy via `./deploy.sh --deploy`
 7. Verify
 
