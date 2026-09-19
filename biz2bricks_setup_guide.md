@@ -22,6 +22,7 @@ Every gotcha in Part 7 is one we actually hit, not a hypothetical.
 8. [Adapting this for another app](#8-adapting-this-for-another-app)
 9. [Cost management](#9-cost-management)
 10. [Before real users](#10-before-real-users)
+11. [Deployed services](#11-deployed-services-biz2bricks-dev-v1)
 
 ---
 
@@ -475,6 +476,59 @@ shortens `name` to the basename and leaves `location` empty. Use
 Do **not** copy `.env.production` between apps — it contains secrets and is
 gitignored for that reason.
 
+### 8.1 Deploying a service that has no `deploy.sh`
+
+Some services (e.g. `doc_intelligence_ai_v3.0`) ship only a `cloudbuild.yaml`.
+Deploy those with:
+
+```bash
+gcloud builds submit --config cloudbuild.yaml --project=<PROJECT_ID>
+```
+
+**Check what gets uploaded first.** `gcloud builds submit` uploads the source
+directory to a GCS bucket. Without a `.gcloudignore`, gcloud falls back to
+`.gitignore` semantics — but only while the directory is a git repo, which makes
+the protection conditional on something unrelated. Write an explicit
+`.gcloudignore` and verify it:
+
+```bash
+gcloud meta list-files-for-upload | grep -E "\.env|\.key|credential"
+```
+
+> **Use `.env*`, not `.env` and `.env.*`.** Neither of those matches
+> underscore variants. In `doc_intelligence_ai_v3.0` a file named `.env_dev`
+> holds live OpenAI, Google and LlamaCloud keys and was missed by both patterns
+> — it would have been uploaded despite being correctly gitignored.
+
+### 8.2 Always set `--service-account` on Cloud Run
+
+If `gcloud run deploy` omits `--service-account`, the service runs as the
+**default compute service account**, which in a typical project holds
+`roles/run.admin` and `roles/storage.admin`. A running service that can delete
+Cloud Run services and wipe buckets is far more privileged than it needs to be.
+
+Name the runtime identity explicitly:
+
+```yaml
+--service-account=document-intelligence-api-sa@<PROJECT_ID>.iam.gserviceaccount.com
+```
+
+Audit what is actually deployed:
+
+```bash
+gcloud run services list --format="table(
+  metadata.name,
+  spec.template.spec.serviceAccountName:label=RUNS_AS)"
+```
+
+### 8.3 Share one Artifact Registry repo
+
+The backend, AI service and frontend all push to the single
+`document-intelligence` repo under different image names (`backend-api`,
+`ai-api`, `frontend`). One repo means one cleanup policy covering every service
+— add a new repo per service and each needs its own, which is how image storage
+quietly grows.
+
 ---
 
 ## 9. Cost management
@@ -484,11 +538,21 @@ gitignored for that reason.
 | Item | Monthly |
 |---|---|
 | Cloud SQL `db-f1-micro`, ZONAL, 10GB SSD | ~$9.40 |
-| Cloud Run (scale-to-zero, within free tier) | $0 |
-| Cloud Build (within free tier — see §7.5) | $0 |
-| Artifact Registry (with cleanup policy) | ~$0.25 |
+| Cloud Run — backend API (1 CPU/1Gi, scale-to-zero) | $0 idle |
+| Cloud Run — AI API (2 CPU/2Gi, scale-to-zero) | $0 idle |
+| Cloud Build (within free tier — see §7.7) | $0 |
+| Artifact Registry (one repo, cleanup policy) | ~$0.25 |
 | GCS + Secret Manager | ~$0.25 |
-| **Total** | **~$10** |
+| **Total idle** | **~$10** |
+
+Both Cloud Run services have `min-instances: 0`, so they cost nothing while
+idle. The AI service is provisioned at 2 CPU / 2Gi and `max-instances: 5`, so
+it is the one that grows fastest under load — it is the first place to look if
+the bill moves.
+
+**Adding a service does not add a database.** The AI service shares the
+backend's Cloud SQL instance, GCS bucket and Artifact Registry repo. That is
+the difference between ~$10/month total and ~$10/month *per service*.
 
 ### 9.2 What actually costs money
 
@@ -572,6 +636,30 @@ customer data lands:
       rather than on the invoice.
 - [ ] **Confirm the runtime service account** holds only the roles it needs
       (§7.4).
+
+---
+
+## 11. Deployed services (biz2bricks-dev-v1)
+
+| Service | URL | Health |
+|---|---|---|
+| `document-intelligence-api-dev` | `https://document-intelligence-api-dev-tfibpeg5zq-uc.a.run.app` | `/health`, `/status` |
+| `document-intelligence-ai-api-dev` | `https://document-intelligence-ai-api-dev-tfibpeg5zq-uc.a.run.app` | `/health` only |
+
+Both run as `document-intelligence-api-sa@biz2bricks-dev-v1.iam.gserviceaccount.com`.
+
+> The AI service exposes **no `/status`** — it returns 404 there. Use `/health`,
+> which reports the database, document agent, sheets agent and LlamaParse
+> individually. The two services do not share a health-endpoint contract.
+
+Shared infrastructure:
+
+- Cloud SQL `doc-intelligence-db`, database `doc_intelligence`
+- GCS bucket `biz2bricks-dev-v1-document-store`
+- Artifact Registry `document-intelligence`, image names `backend-api` /
+  `document-intelligence-api-dev` / `ai-api`
+- Secrets: `JWT_SECRET_KEY`, `REFRESH_SECRET_KEY`, `DATABASE_PASSWORD`,
+  `openai-api-key`, `google-api-key`, `llamaparse-api-key`
 
 ---
 
