@@ -247,6 +247,18 @@ This creates, idempotently:
 | Service account | `document-intelligence-api-sa@<project>.iam.gserviceaccount.com` |
 | IAM roles | `cloudsql.client`, `storage.objectAdmin`, `secretmanager.secretAccessor` |
 
+> **One role is missing and you must add it.** `roles/storage.objectAdmin`
+> grants object access but **not** `storage.buckets.get`, which the app calls
+> when initialising its GCS client. Without it the service starts, reports
+> `/health` as 200, and `/status` as `degraded` with GCS `unavailable`.
+> Grant the minimal extra role, scoped to the bucket:
+>
+> ```bash
+> gcloud storage buckets add-iam-policy-binding gs://<BUCKET> \
+>   --member="serviceAccount:document-intelligence-api-sa@$PROJECT_ID.iam.gserviceaccount.com" \
+>   --role="roles/storage.legacyBucketReader"
+> ```
+
 **Takes ~10 minutes** — Cloud SQL instance creation dominates. The CLI prompts
 for confirmation; read the project name in the banner before answering (§7.2).
 
@@ -267,10 +279,15 @@ gcloud sql instances list --project=$PROJECT_ID
 ### 6.1 Manual deploy
 
 ```bash
-./deploy.sh --deploy                      # dev
-./deploy.sh --deploy --env production     # production
-./deploy.sh --fast --skip-tests           # quick redeploy, skips infra checks
+./deploy.sh --deploy --project-id <PROJECT_ID>                    # dev
+./deploy.sh --deploy --project-id <PROJECT_ID> --env production   # production
+./deploy.sh --fast --project-id <PROJECT_ID> --skip-tests         # quick redeploy
 ```
+
+> **`--project-id` is required.** Without it the script exits immediately with
+> `--project-id is required for deployment`. It does not fall back to the
+> gcloud default project. You can instead export `GCP_PROJECT_ID`, which the
+> script reads as the default.
 
 Requires the Docker daemon to be running.
 
@@ -386,14 +403,44 @@ gcloud run services describe <SERVICE> --region=us-central1 \
   --format="value(spec.template.spec.serviceAccountName)"
 ```
 
-### 7.5 Cloud Build costs more than expected
+### 7.5 `/status` reports `degraded`, GCS `unavailable` (403)
+
+```
+does not have storage.buckets.get access to the Google Cloud Storage bucket
+```
+
+`roles/storage.objectAdmin` does not include `storage.buckets.get`. Add
+`roles/storage.legacyBucketReader` on the bucket (see §5.3).
+
+**After granting it, force a new revision.** The app builds its GCS client once
+at startup, so a warm container keeps serving the cached failure:
+
+```bash
+gcloud run services update <SERVICE> --region=us-central1 \
+  --update-env-vars="IAM_FIX_AT=$(date +%s)"
+```
+
+### 7.6 Deploy succeeds but exits 1
+
+Two separate causes, both fixed in `deploy.sh`:
+
+- **`tmp_env_file: unbound variable`** — the `EXIT` trap referenced a
+  function-local variable. By the time the trap fires the function has returned,
+  so under `set -u` the cleanup aborted the script *after* a fully successful
+  deploy. The variable must be script-scoped for the trap to see it.
+- **"Some smoke tests failed"** — `pytest -m smoke` exits 5 when it collects
+  nothing, and no test in this repo carries a `smoke` marker (the registered
+  ones are `unit`, `integration`, `auth`, `slow`). Exit 5 is now reported
+  distinctly from a real failure.
+
+### 7.7 Cloud Build costs more than expected
 
 `cloudbuild.yaml` must **not** set `machineType`. The 2,500 free
 build-minutes/month apply only to the default pool's default machine type;
 naming any custom type (e.g. `E2_HIGHCPU_8`) opts the build out of the free tier
 entirely and bills every minute.
 
-### 7.6 Cannot read files in `~/Downloads` (macOS)
+### 7.8 Cannot read files in `~/Downloads` (macOS)
 
 macOS TCC protects `~/Downloads`, `~/Documents` and `~/Desktop` per-application.
 Symptom: `stat` works but `cat`/`unzip` return `Operation not permitted`.
@@ -401,7 +448,7 @@ Symptom: `stat` works but `cat`/`unzip` return `Operation not permitted`.
 Either move the files elsewhere, or grant Full Disk Access to your terminal in
 System Settings → Privacy & Security, then restart it.
 
-### 7.7 `gcloud ... --format="value(...)"` returns blank fields
+### 7.9 `gcloud ... --format="value(...)"` returns blank fields
 
 Some fields are not populated in list output. `artifacts repositories list`
 shortens `name` to the basename and leaves `location` empty. Use
@@ -542,7 +589,7 @@ gcloud artifacts repositories create document-intelligence \
 biz2bricks provision full-setup --env-file .env.production
 
 # Deploy + verify
-./deploy.sh --deploy
+./deploy.sh --deploy --project-id <PROJECT_ID>
 curl -s "$(gcloud run services describe document-intelligence-api-dev \
   --region=us-central1 --format='value(status.url)')/status"
 

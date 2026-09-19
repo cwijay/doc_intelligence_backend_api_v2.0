@@ -40,6 +40,11 @@ command_exists() { command -v "$1" >/dev/null 2>&1; }
 # biz2bricks_infra provisions (provision/config.py: service_account_name).
 readonly RUNTIME_SA_NAME="document-intelligence-api-sa"
 
+# Rendered env file passed to `gcloud run deploy`; removed on any exit path.
+DEPLOY_TMP_ENV_FILE=""
+cleanup_tmp_env() { [[ -n "${DEPLOY_TMP_ENV_FILE:-}" ]] && rm -f "$DEPLOY_TMP_ENV_FILE"; return 0; }
+trap cleanup_tmp_env EXIT
+
 # =============================================================================
 # Environment Variable Helpers
 # =============================================================================
@@ -496,9 +501,13 @@ run_deploy_mode() {
     local secrets_spec="JWT_SECRET_KEY=JWT_SECRET_KEY${secret_suffix}:latest,DATABASE_PASSWORD=DATABASE_PASSWORD${secret_suffix}:latest"
 
     # Create temp env file
-    local tmp_env_file
-    tmp_env_file="$(mktemp)"
-    trap 'rm -f "$tmp_env_file"' EXIT
+    # Script-scoped, not local: the EXIT trap fires after this function has
+    # returned, so a `local` is out of scope by then and `set -u` turns the
+    # cleanup into "unbound variable" -- failing the script after a successful
+    # deploy. The file holds rendered config, so it must be removed on any exit
+    # path, not just the happy one.
+    DEPLOY_TMP_ENV_FILE="$(mktemp)"
+    local tmp_env_file="$DEPLOY_TMP_ENV_FILE"
     write_env_file "$tmp_env_file"
 
     # Build and push image
@@ -528,8 +537,14 @@ run_deploy_mode() {
             log_info "Running smoke tests..."
             export TEST_BASE_URL="$service_url"
             if command_exists uv; then
-                uv run pytest tests/ -v -m "smoke" --asyncio-mode=auto --tb=short || \
-                    log_warn "Some smoke tests failed"
+                uv run pytest tests/ -v -m "smoke" --asyncio-mode=auto --tb=short
+                local pytest_status=$?
+                case $pytest_status in
+                    0) log_success "Smoke tests passed" ;;
+                    5) log_warn "No tests are marked 'smoke', so none ran. The deploy"
+                       log_warn "itself succeeded and /health was verified above." ;;
+                    *) log_warn "Smoke tests failed (pytest exit $pytest_status)" ;;
+                esac
             else
                 log_warn "uv not found; skipping smoke tests"
             fi
