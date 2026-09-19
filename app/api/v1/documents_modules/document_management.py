@@ -538,8 +538,15 @@ async def delete_document(
             "Document deletion", document_id=document_id, **user_context
         )
 
+        # Pass the deleting user through: it is recorded in the audit log, and the
+        # AI service rejects the de-index call without a user header.
+        # get_user_context falls back to "unknown" when no id is present, which is
+        # not a real user id - send None instead of a value that cannot resolve.
+        user_id = user_context.get("user_id")
         result = await document_service.delete_document(
-            org_id=org_id, document_id=document_id
+            org_id=org_id,
+            document_id=document_id,
+            deleted_by_user_id=user_id if user_id and user_id != "unknown" else None,
         )
 
         log_operation_success(

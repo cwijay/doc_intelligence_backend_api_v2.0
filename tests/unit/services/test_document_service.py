@@ -370,7 +370,34 @@ class TestDocumentServiceCRUDDelegation:
             result = await service.delete_document(org_id, doc_id)
 
             assert result == expected_result
-            mock_delete.assert_called_once_with(org_id=org_id, document_id=doc_id)
+            mock_delete.assert_called_once_with(
+                org_id=org_id, document_id=doc_id, deleted_by_user_id=None
+            )
+
+    async def test_delete_document_forwards_deleting_user(self):
+        """The deleting user must reach the CRUD service.
+
+        It is recorded in the audit log and is required for the de-index call to
+        the AI service, which rejects requests without a user header. Dropping it
+        silently leaves deleted documents searchable.
+        """
+        from app.services.document.document_service import DocumentService
+
+        service = DocumentService()
+        org_id = str(uuid.uuid4())
+        doc_id = str(uuid.uuid4())
+        user_id = str(uuid.uuid4())
+
+        with patch.object(
+            service.crud_service,
+            'delete_document',
+            return_value={"success": True, "message": "Document deleted"}
+        ) as mock_delete:
+            await service.delete_document(org_id, doc_id, deleted_by_user_id=user_id)
+
+            mock_delete.assert_called_once_with(
+                org_id=org_id, document_id=doc_id, deleted_by_user_id=user_id
+            )
 
 
 class TestDocumentServiceQueryDelegation:

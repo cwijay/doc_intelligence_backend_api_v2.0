@@ -176,10 +176,17 @@ class DocumentService(DocumentBaseService):
             metadata=metadata,
         )
 
-    async def delete_document(self, org_id: str, document_id: str) -> Dict[str, Any]:
+    async def delete_document(
+        self,
+        org_id: str,
+        document_id: str,
+        deleted_by_user_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """Delegate to CRUD service."""
         return await self.crud_service.delete_document(
-            org_id=org_id, document_id=document_id
+            org_id=org_id,
+            document_id=document_id,
+            deleted_by_user_id=deleted_by_user_id,
         )
 
     async def download_document(
