@@ -36,6 +36,10 @@ exit_with_error() { log_error "$1"; exit 1; }
 
 command_exists() { command -v "$1" >/dev/null 2>&1; }
 
+# Runtime identity for the Cloud Run service. Must match the service account
+# biz2bricks_infra provisions (provision/config.py: service_account_name).
+readonly RUNTIME_SA_NAME="document-intelligence-api-sa"
+
 # =============================================================================
 # Environment Variable Helpers
 # =============================================================================
@@ -396,7 +400,9 @@ run_deploy_mode() {
     # Set GCP project
     log_info "Setting GCP project to $project_id"
     gcloud config set project "$project_id" --quiet >/dev/null
-    gcloud auth configure-docker --quiet >/dev/null
+    # The bare form only configures gcr.io. Artifact Registry needs its host
+    # named explicitly or `docker push` fails with an auth error.
+    gcloud auth configure-docker "${region}-docker.pkg.dev" --quiet >/dev/null
 
     # Full deploy mode: ensure infrastructure
     if [[ "$fast_mode" != "true" ]]; then
@@ -425,10 +431,10 @@ run_deploy_mode() {
         # Detect or create service account
         service_account="$(gcloud run services describe "$service_name" --region "$region" --format="value(spec.template.spec.serviceAccountName)" 2>/dev/null || true)"
         if [[ -z "$service_account" ]]; then
-            service_account="$(gcloud iam service-accounts list --project="$project_id" --format="value(email)" | head -n 1)"
-        fi
-        if [[ -z "$service_account" ]]; then
-            service_account="document-int-run@$project_id.iam.gserviceaccount.com"
+            # Was `... | head -n 1`, which returned whichever account sorted first.
+            # In this project that is github-actions-deployer@ -- the CI identity,
+            # both wrong and more privileged than the service needs.
+            service_account="$RUNTIME_SA_NAME@$project_id.iam.gserviceaccount.com"
         fi
 
         ensure_service_account "$service_account" "$project_id"
@@ -456,9 +462,10 @@ run_deploy_mode() {
         # Get existing service account
         service_account="$(gcloud run services describe "$service_name" --region "$region" --format="value(spec.template.spec.serviceAccountName)" 2>/dev/null || true)"
         if [[ -z "$service_account" ]]; then
-            service_account="$(gcloud iam service-accounts list --project="$project_id" --format="value(email)" | head -n 1)"
+            service_account="$RUNTIME_SA_NAME@$project_id.iam.gserviceaccount.com"
+            gcloud iam service-accounts describe "$service_account" --project="$project_id" >/dev/null 2>&1 \
+                || exit_with_error "Service account $service_account not found. Run a full deploy first."
         fi
-        [[ -z "$service_account" ]] && exit_with_error "No service account found. Run full deploy first."
     fi
 
     # Set common environment variables
@@ -495,7 +502,10 @@ run_deploy_mode() {
     write_env_file "$tmp_env_file"
 
     # Build and push image
-    local image="gcr.io/$project_id/$service_name"
+    # Same Artifact Registry repo as cloudbuild.yaml so there is a single image
+    # store under a single cleanup policy. The image name stays distinct from
+    # CI's "backend-api" so manual and pipeline artifacts do not share tags.
+    local image="${region}-docker.pkg.dev/$project_id/document-intelligence/$service_name"
     local timestamp_tag="$image:$(date +%s)"
     local latest_tag="$image:latest"
     build_and_push_image "$image" "$latest_tag" "$timestamp_tag"

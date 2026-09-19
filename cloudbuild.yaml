@@ -159,7 +159,6 @@ substitutions:
 
   # GCP settings
   _GCS_BUCKET_NAME: 'biz2bricks-dev-v1-document-store'
-  _SERVICE_ACCOUNT: '727735128283-compute@developer.gserviceaccount.com'
 
   # Cloud SQL settings
   _CLOUD_SQL_INSTANCE: 'biz2bricks-dev-v1:us-central1:doc-intelligence-db'

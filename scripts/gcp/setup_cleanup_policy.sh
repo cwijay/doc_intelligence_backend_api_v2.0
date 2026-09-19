@@ -71,10 +71,25 @@ echo ""
 
 # Discover every Docker repository rather than hardcoding, so the gcr.io
 # repo created by deploy.sh is picked up too.
+# gcloud's value()/table() output shortens `name` to the basename and leaves
+# `location` empty, so neither yields the region. The JSON keeps the
+# fully-qualified projects/P/locations/LOC/repositories/REPO, so parse that.
 REPOS="$(gcloud artifacts repositories list \
     --project="$PROJECT_ID" \
-    --format="value(name,format,location)" \
-    --filter="format=DOCKER" 2>/dev/null || true)"
+    --format=json 2>/dev/null \
+  | python3 -c '
+import sys, json
+try:
+    repos = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+for r in repos:
+    if r.get("format") != "DOCKER":
+        continue
+    parts = r.get("name", "").split("/")
+    if len(parts) >= 6:
+        print(parts[-1] + "\t" + parts[3])
+' || true)"
 
 if [[ -z "$REPOS" ]]; then
     echo "No Docker repositories found (or insufficient permissions)."
@@ -82,9 +97,8 @@ if [[ -z "$REPOS" ]]; then
     exit 1
 fi
 
-while IFS=$'\t' read -r name format location; do
-    [[ -z "$name" ]] && continue
-    repo="${name##*/}"
+while IFS=$'\t' read -r repo location; do
+    [[ -z "$repo" || -z "$location" ]] && continue
 
     echo "--- $repo ($location) ---"
 
