@@ -140,6 +140,10 @@ dmypy.json
 # Firebase
 firebase-service-account-key.json
 *.json
+# Declarative infra config, not a credential. Negated by exact path rather
+# than a scripts/gcp/*.json glob, so a stray service-account key dropped
+# in that directory stays ignored by the blanket *.json above.
+!scripts/gcp/artifact-registry-cleanup-policy.json
 
 # IDE
 .vscode/

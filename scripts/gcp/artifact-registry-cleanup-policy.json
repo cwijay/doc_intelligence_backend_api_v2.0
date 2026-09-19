@@ -1,0 +1,17 @@
+[
+  {
+    "name": "keep-recent-builds",
+    "action": { "type": "Keep" },
+    "mostRecentVersions": {
+      "keepCount": 3
+    }
+  },
+  {
+    "name": "delete-old-builds",
+    "action": { "type": "Delete" },
+    "condition": {
+      "tagState": "ANY",
+      "olderThan": "30d"
+    }
+  }
+]
