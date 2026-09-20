@@ -75,7 +75,63 @@ steps:
       - '${_REGION}-docker.pkg.dev/$PROJECT_ID/document-intelligence/backend-api'
     waitFor: ['build-image']
 
-  # Step 4: Deploy to Cloud Run (immediate 100% traffic)
+  # Step 4: Apply database migrations
+  # Runs before the new revision serves traffic, so a failed migration aborts
+  # the deploy instead of crash-looping Cloud Run. Schema is owned by Alembic;
+  # the services no longer create tables on startup.
+  #
+  # ONE-TIME SETUP for a database that predates this step: it was built by
+  # create_all and already holds every table, so it must be stamped once before
+  # the first run, otherwise the baseline revision tries to create tables that
+  # already exist:
+  #     alembic stamp head
+  #
+  # The Cloud Build service account needs roles/cloudsql.client and
+  # roles/secretmanager.secretAccessor.
+  - name: 'python:3.12-slim'
+    id: 'migrate-database'
+    entrypoint: 'bash'
+    secretEnv: ['DATABASE_PASSWORD']
+    env:
+      - 'USE_CLOUD_SQL_CONNECTOR=true'
+      - 'CLOUD_SQL_IP_TYPE=PUBLIC'
+      - 'CLOUD_SQL_INSTANCE=${_CLOUD_SQL_INSTANCE}'
+      - 'DATABASE_NAME=${_DATABASE_NAME}'
+      - 'DATABASE_USER=${_DATABASE_USER}'
+    args:
+      - '-c'
+      - |
+        set -euo pipefail
+
+        apt-get update -qq && apt-get install -y -qq git > /dev/null
+
+        # Migrations live in the biz2bricks_core repository, not in its wheel,
+        # so check out exactly the revision this image pins. That keeps the
+        # schema in step with the code that will run against it.
+        CORE_REV=$$(grep -A2 'name = "biz2bricks-core"' uv.lock \
+          | grep 'source = ' | sed -E 's/.*#([0-9a-f]{40}).*/\1/')
+        if [ -z "$$CORE_REV" ]; then
+          echo "Could not read the biz2bricks-core revision from uv.lock"
+          exit 1
+        fi
+        echo "biz2bricks-core revision pinned by uv.lock: $$CORE_REV"
+
+        git clone --quiet https://github.com/cwijay/biz_to_bricks_core_v1.git /workspace/core
+        cd /workspace/core
+        git checkout --quiet "$$CORE_REV"
+
+        pip install --quiet --root-user-action=ignore ".[migrations,pgvector]"
+
+        echo "Revision before migrating:"
+        alembic current
+        alembic upgrade head
+        echo "Revision after migrating:"
+        alembic current
+
+        echo "Migrations applied."
+    waitFor: ['push-image']
+
+  # Step 5: Deploy to Cloud Run (immediate 100% traffic)
   - name: 'gcr.io/cloud-builders/gcloud'
     id: 'deploy-to-cloudrun'
     entrypoint: 'bash'
@@ -102,9 +158,9 @@ steps:
           || exit 1
 
         echo "Deployment successful!"
-    waitFor: ['push-image']
+    waitFor: ['migrate-database']
 
-  # Step 5: Health check
+  # Step 6: Health check
   - name: 'gcr.io/cloud-builders/gcloud'
     id: 'health-check'
     entrypoint: 'bash'
@@ -147,6 +203,12 @@ steps:
         echo "Environment: ${_ENV}"
         echo "Service URL: $$SERVICE_URL"
     waitFor: ['deploy-to-cloudrun']
+
+# Secrets exposed to build steps (the migration step needs the DB password)
+availableSecrets:
+  secretManager:
+    - versionName: projects/$PROJECT_ID/secrets/DATABASE_PASSWORD${_SECRET_SUFFIX}/versions/latest
+      env: 'DATABASE_PASSWORD'
 
 # Substitution variables
 # Override these via Cloud Build triggers or --substitutions flag

@@ -52,10 +52,12 @@ async def lifespan(app: FastAPI):
     try:
         engine = await db.get_engine_async()
         if engine:
-            # Create tables in development mode
-            if settings.is_development:
-                await db.create_tables()
-                startup_tasks.append("Database tables created/verified")
+            # The schema is owned by Alembic and applied by the deploy-time
+            # migration step. Creating tables here ran on every start of the
+            # dev service (ENVIRONMENT=dev satisfies is_development), which
+            # silently diverged the database from the migrations -- and could
+            # only ever add tables, never alter one. For a local database, run:
+            #     alembic upgrade head        # from the biz2bricks_core repo
 
             # Test connection
             if await db.test_connection():

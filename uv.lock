@@ -227,7 +227,7 @@ wheels = [
 [[package]]
 name = "biz2bricks-core"
 version = "0.1.0"
-source = { git = "https://github.com/cwijay/biz_to_bricks_core_v1.git?branch=main#9ad069dde1f08a36ef0cf972b6fe86f7cea04dde" }
+source = { git = "https://github.com/cwijay/biz_to_bricks_core_v1.git?branch=main#5e931d8e332d74ff604999624cd77367f96331ff" }
 dependencies = [
     { name = "asyncpg" },
     { name = "cloud-sql-python-connector", extra = ["asyncpg"] },
